@@ -1,0 +1,6 @@
+- name: Install package.
+  become: true
+  ansible.builtin.package:
+    deb: "{{ item }}"
+    state: present
+  loop: "{{ step_ca_packages }}"

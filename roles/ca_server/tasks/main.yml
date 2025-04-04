@@ -1,0 +1,26 @@
+- name: Ensure step group
+  ansible.builtin.user:
+    name: step
+    system: true
+- name: Ensure step user
+  ansible.builtin.user:
+    name: step
+    group: step
+    home: /etc/step-ca
+    shell: /bin/false
+    system: true
+- name: Include OS family specific install tasks
+  ansible.builtin.include_tasks:
+    file: "install_{{ ansible_os_family }}.yml"
+- name: Ensure CAP_NET_BIND_SERVICE to /usr/bin/step-ca
+  become: true
+  community.general.capabilities:
+    capability: "cap_net_bind_service=ep"
+    path: /usr/bin/step-ca
+    state: present
+- name: Ensure systemd unit file
+  become: true
+  ansible.builtin.template:
+    src: unit.j2
+    dest: /etc/systemd/system/step-ca.service
+    mode: '0644'

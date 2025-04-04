@@ -1,0 +1,6 @@
+- name: Install CLI package
+  become: true
+  ansible.builtin.package:
+    deb: "{{ item }}"
+    state: present
+  loop: "{{ step_ca_package_cli }}"
