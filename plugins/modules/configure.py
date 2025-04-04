@@ -38,46 +38,62 @@ def save_json_file(json_path, data):
 def main():
     """Main function to execute the Ansible module logic."""
     module_args = {
-        "ca_config": {"type": "path", "required": False, "default": None},
-        "ca_path": {"type": "path", "required": False, "default": None},
-        "crt": {"type": "path", "required": False, "default": None},
-        "db_datasource": {"type": "str", "required": False, "default": None},
-        "json_path": {"type": "str", "required": True},
-        "key": {"type": "path", "required": False, "default": None},
-        "root": {"type": "path", "required": False, "default": None},
+        "ca_config": {
+            "type": "path", "required": False, "default": None
+        },
+        "ca_path": {
+            "type": "path", "required": False, "default": None
+        },
+        "crt": {
+            "type": "path", "required": False, "default": None
+        },
+        "db_datasource": {
+            "type": "str", "required": False, "default": None
+        },
+        "json_path": {
+            "type": "str", "required": True
+        },
+        "key": {
+            "type": "path", "required": False, "default": None
+        },
+        "root": {
+            "type": "path", "required": False, "default": None
+        },
     }
 
-    module = AnsibleModule(argument_spec=module_args, supports_check_mode=True)
+    module = AnsibleModule(
+        argument_spec=module_args,
+        supports_check_mode=True
+    )
 
     json_path = module.params["json_path"]
 
-    # Construct updates dictionary from provided parameters
     updates = {
         key: module.params[key]
         for key in module_args.keys()
         if key != "json_path" and module.params[key] is not None
     }
 
-    # Load existing JSON data
     json_data = load_json_file(json_path)
 
-    # Handle JSON loading errors
     if "error" in json_data:
         module.fail_json(msg=json_data["error"])
 
-    # Apply updates
     json_data.update(updates)
 
     if module.check_mode:
         module.exit_json(changed=True, new_data=json_data)
 
-    # Save updated JSON data
     result = save_json_file(json_path, json_data)
 
     if "error" in result:
         module.fail_json(msg=result["error"])
 
-    module.exit_json(changed=True, msg="JSON file updated", new_data=json_data)
+    module.exit_json(
+        changed=True,
+        msg="JSON file updated",
+        new_data=json_data
+    )
 
 
 if __name__ == "__main__":
