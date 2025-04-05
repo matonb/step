@@ -214,21 +214,6 @@ def main() -> None:
     x509_max = module.params.get("x509_max")
     x509_default = module.params.get("x509_default")
 
-    # Helper function to sort the dictionaries in a consistent order
-    def sort_provisioner_dict(p_dict):
-        # Define the order of keys you want
-        key_order = ["name", "type", "claims", "options", "key", "encryptedKey"]
-        # Create a new dict with keys in the desired order
-        sorted_dict = {}
-        for key in key_order:
-            if key in p_dict:
-                sorted_dict[key] = p_dict[key]
-        # Add any remaining keys not in the explicit order
-        for key in p_dict:
-            if key not in sorted_dict:
-                sorted_dict[key] = p_dict[key]
-        return sorted_dict
-
     try:
         context = StepCAContext(
             ca_path=ca_path,
@@ -241,13 +226,13 @@ def main() -> None:
             x509_max=x509_max,
             x509_default=x509_default,
         )
-        provisioners_before = context.load_provisioners()
+        provisioners = context.load_provisioners()
 
         changed = False
-        provisioners_after = provisioners_before
+        restart_required = False
         matched = [
             p
-            for p in provisioners_before
+            for p in provisioners
             if p.name == name and (not provisioner_type or p.type == provisioner_type)
         ]
 
@@ -255,7 +240,8 @@ def main() -> None:
             # Remove the provisioner if it exists and state is "absent"
             context.remove_provisioner(name)
             changed = True
-            provisioners_after = context.load_provisioners()
+            restart_required = True
+            # After restart, this provisioner will be gone
             matched = []
         elif state == "present" and not matched and provisioner_type:
             # Create the provisioner if it doesn't exist, state is "present",
@@ -268,13 +254,18 @@ def main() -> None:
                 x509_default=x509_default,
             )
             changed = True
-            provisioners_after = context.load_provisioners()
-            matched = [
-                p
-                for p in provisioners_after
-                if p.name == name
-                and (not provisioner_type or p.type == provisioner_type)
-            ]
+            restart_required = True
+            # After restart, this provisioner will be available
+            # We can construct what it would look like
+            from ansible_collections.matonb.step.plugins.module_utils.provisioner import (
+                Provisioner,
+            )
+
+            new_provisioner = Provisioner(
+                name=name,
+                type=provisioner_type,
+            )
+            matched = [new_provisioner]
         elif state == "present" and not provisioner_type:
             module.fail_json(
                 msg="Parameter 'type' is required when state is 'present' and the provisioner doesn't exist."
@@ -282,9 +273,8 @@ def main() -> None:
 
         module.exit_json(
             changed=changed,
+            restart_required=restart_required,
             name=name,
-            provisioners_after=[p.to_dict() for p in provisioners_after],
-            provisioners_before=[p.to_dict() for p in provisioners_before],
             provisioners=[p.to_dict() for p in matched],
             state=state,
             type=provisioner_type,
