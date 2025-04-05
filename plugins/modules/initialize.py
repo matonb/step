@@ -7,7 +7,8 @@ from typing import Optional, Tuple
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.matonb.step.plugins.module_utils.process import (
-    run_command, CommandTimeout
+    run_command,
+    CommandTimeout,
 )
 
 
@@ -125,7 +126,7 @@ def run_step_ca_initialize(params, module) -> Optional[Tuple[int, str, str]]:
             command=build_cmd,
             timeout=timeout,
             debug=True,
-            check=False  # We'll handle the return code ourselves
+            check=False,  # We'll handle the return code ourselves
         )
         return result.returncode, result.stdout, result.stderr
 

@@ -120,9 +120,7 @@ class StepCAContext:
         Raises:
             RuntimeError: If the command or JSON parsing fails.
         """
-        command = self._extend_command(
-            ["step", "ca", "provisioner", "list"]
-        )
+        command = self._extend_command(["step", "ca", "provisioner", "list"])
         try:
             result = run_command(
                 command,
@@ -132,9 +130,7 @@ class StepCAContext:
             )
             raw_data = json.loads(result.stdout)
         except json.JSONDecodeError as err:
-            raise RuntimeError(
-                "Failed to parse JSON from step output."
-            ) from err
+            raise RuntimeError("Failed to parse JSON from step output.") from err
 
         provisioners: List[Provisioner] = []
         for item in raw_data:
@@ -161,9 +157,7 @@ class StepCAContext:
         Raises:
             RuntimeError: If the CLI command fails.
         """
-        command = self._extend_command(
-            ["step", "ca", "provisioner", "remove", name]
-        )
+        command = self._extend_command(["step", "ca", "provisioner", "remove", name])
         run_command(
             command,
             username=self.run_as,
