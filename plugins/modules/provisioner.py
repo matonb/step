@@ -80,6 +80,27 @@ options:
     required: false
     type: str
     choices: [JWK, OIDC, AWS, GCP, Azure, ACME, X5C, K8SSA, SSHPOP, SCEP, Nebula]
+  x509_min:
+    description:
+      - Minimum certificate duration for X509 certificates.
+      - Valid time units are s = seconds, m = minutes, h = hours.
+    required: false
+    type: str
+  x509_max:
+    description:
+      - Maximum certificate duration for X509 certificates.
+      - Valid time units are s = seconds, m = minutes, h = hours.
+    required: false
+    type: str
+  x509_default:
+    description:
+      - Default certificate duration for X509 certificates.
+      - must be greater than or equal to x509_min.
+      - must be less than or equal to x509_max.
+      - Valid time units are s = seconds, m = minutes, h = hours.
+    required: false
+    type: str
+    default: 36h
 author:
   - Brett Maton (@matonb)
 """
@@ -131,8 +152,7 @@ def get_argument_spec() -> dict:
         "ca_path": {
             "type": "path",
             "required": False,
-            "description":
-                "Sets the STEPPATH environment variable before executing step commands.",
+            "description": "Sets the STEPPATH environment variable before executing step commands.",
         },
         "ca_root": {"type": "path", "required": False},
         "ca_url": {"type": "str", "required": False},
@@ -159,6 +179,21 @@ def get_argument_spec() -> dict:
             "default": "present",
         },
         "type": {"type": "str", "choices": VALID_TYPES, "required": False},
+        "x509_min": {
+            "type": "str",
+            "required": False,
+            "description": "Minimum certificate duration for X509 certificates.",
+        },
+        "x509_max": {
+            "type": "str",
+            "required": False,
+            "description": "Maximum certificate duration for X509 certificates.",
+        },
+        "x509_default": {
+            "type": "str",
+            "required": False,
+            "description": "Default certificate duration for X509 certificates.",
+        },
     }
 
 
@@ -175,6 +210,24 @@ def main() -> None:
     provisioner_type = module.params.get("type")
     state = module.params["state"]
     run_as = module.params.get("run_as")
+    x509_min = module.params.get("x509_min")
+    x509_max = module.params.get("x509_max")
+    x509_default = module.params.get("x509_default")
+
+    # Helper function to sort the dictionaries in a consistent order
+    def sort_provisioner_dict(p_dict):
+        # Define the order of keys you want
+        key_order = ["name", "type", "claims", "options", "key", "encryptedKey"]
+        # Create a new dict with keys in the desired order
+        sorted_dict = {}
+        for key in key_order:
+            if key in p_dict:
+                sorted_dict[key] = p_dict[key]
+        # Add any remaining keys not in the explicit order
+        for key in p_dict:
+            if key not in sorted_dict:
+                sorted_dict[key] = p_dict[key]
+        return sorted_dict
 
     try:
         context = StepCAContext(
@@ -184,6 +237,9 @@ def main() -> None:
             debug=debug,
             fingerprint=fingerprint,
             run_as=run_as,
+            x509_min=x509_min,
+            x509_max=x509_max,
+            x509_default=x509_default,
         )
         provisioners_before = context.load_provisioners()
 
@@ -196,10 +252,33 @@ def main() -> None:
         ]
 
         if state == "absent" and matched:
+            # Remove the provisioner if it exists and state is "absent"
             context.remove_provisioner(name)
             changed = True
             provisioners_after = context.load_provisioners()
             matched = []
+        elif state == "present" and not matched and provisioner_type:
+            # Create the provisioner if it doesn't exist, state is "present",
+            # and provisioner_type is specified
+            context.add_provisioner(
+                name=name,
+                provisioner_type=provisioner_type,
+                x509_min=x509_min,
+                x509_max=x509_max,
+                x509_default=x509_default,
+            )
+            changed = True
+            provisioners_after = context.load_provisioners()
+            matched = [
+                p
+                for p in provisioners_after
+                if p.name == name
+                and (not provisioner_type or p.type == provisioner_type)
+            ]
+        elif state == "present" and not provisioner_type:
+            module.fail_json(
+                msg="Parameter 'type' is required when state is 'present' and the provisioner doesn't exist."
+            )
 
         module.exit_json(
             changed=changed,

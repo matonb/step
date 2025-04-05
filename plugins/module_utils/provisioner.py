@@ -85,6 +85,9 @@ class StepCAContext:
     debug: bool = False
     fingerprint: Optional[str] = None
     run_as: Optional[str] = None
+    x509_min: Optional[str] = None
+    x509_max: Optional[str] = None
+    x509_default: Optional[str] = None
 
     def _build_env(self) -> Optional[Dict[str, str]]:
         """Construct environment variables for CLI execution.
@@ -109,6 +112,15 @@ class StepCAContext:
             command.extend(["--ca-url", self.ca_url])
         if self.fingerprint:
             command.extend(["--fingerprint", self.fingerprint])
+
+        # Add X509 duration parameters if provided
+        if self.x509_min:
+            command.extend(["--x509-min-dur", self.x509_min])
+        if self.x509_max:
+            command.extend(["--x509-max-dur", self.x509_max])
+        if self.x509_default:
+            command.extend(["--x509-default-dur", self.x509_default])
+
         return command
 
     def load_provisioners(self) -> List[Provisioner]:
@@ -158,6 +170,46 @@ class StepCAContext:
             RuntimeError: If the CLI command fails.
         """
         command = self._extend_command(["step", "ca", "provisioner", "remove", name])
+        run_command(
+            command,
+            username=self.run_as,
+            env_vars=self._build_env(),
+            debug=self.debug,
+        )
+
+    def add_provisioner(
+        self,
+        name: str,
+        provisioner_type: str,
+        x509_min: Optional[str] = None,
+        x509_max: Optional[str] = None,
+        x509_default: Optional[str] = None,
+    ) -> None:
+        """Add a new provisioner via the Step CLI.
+
+        Args:
+            name (str): The name for the new provisioner.
+            provisioner_type (str): The type of provisioner to create.
+            x509_min (Optional[str]): Minimum certificate duration for X509 certificates.
+            x509_max (Optional[str]): Maximum certificate duration for X509 certificates.
+            x509_default (Optional[str]): Default certificate duration for X509 certificates.
+
+        Raises:
+            RuntimeError: If the CLI command fails.
+        """
+        command = self._extend_command(
+            ["step", "ca", "provisioner", "add", name, "--type", provisioner_type]
+        )
+
+        # Add specific X509 duration parameters if provided
+        # These parameters override any set in the StepCAContext
+        if x509_min:
+            command.extend(["--x509-min-dur", x509_min])
+        if x509_max:
+            command.extend(["--x509-max-dur", x509_max])
+        if x509_default:
+            command.extend(["--x509-default-dur", x509_default])
+
         run_command(
             command,
             username=self.run_as,
