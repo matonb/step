@@ -14,11 +14,10 @@ environments.
 """
 
 import json
-import subprocess
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Type
 
-from .process import run_command_as_user
+from .process import run_command
 
 
 @dataclass
@@ -125,18 +124,13 @@ class StepCAContext:
             ["step", "ca", "provisioner", "list"]
         )
         try:
-            result = run_command_as_user(
+            result = run_command(
                 command,
                 username=self.run_as,
                 env_vars=self._build_env(),
                 debug=self.debug,
             )
             raw_data = json.loads(result.stdout)
-        except subprocess.CalledProcessError as err:
-            raise RuntimeError(
-                "'step ca provisioner list' failed: "
-                f"{err.stderr.strip()}"
-            ) from err
         except json.JSONDecodeError as err:
             raise RuntimeError(
                 "Failed to parse JSON from step output."
@@ -170,18 +164,12 @@ class StepCAContext:
         command = self._extend_command(
             ["step", "ca", "provisioner", "remove", name]
         )
-        try:
-            run_command_as_user(
-                command,
-                username=self.run_as,
-                env_vars=self._build_env(),
-                debug=self.debug,
-            )
-        except subprocess.CalledProcessError as err:
-            raise RuntimeError(
-                f"Failed to remove provisioner '{name}': "
-                f"{err.stderr.strip()}"
-            ) from err
+        run_command(
+            command,
+            username=self.run_as,
+            env_vars=self._build_env(),
+            debug=self.debug,
+        )
 
 
 _PROVISIONER_CLASSES: Dict[str, Type[Provisioner]] = {

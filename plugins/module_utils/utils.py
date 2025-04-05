@@ -1,13 +1,15 @@
 """Utility functions for working with the 'step' command."""
 
 import json
-import subprocess
 from pathlib import Path
+from typing import Tuple, Optional, Dict, Any
+
+from .process import run_command
 
 ENCODING = "utf-8"
 
 
-def get_step_path():
+def get_step_path() -> str:
     """Execute 'step path' command and return its output.
 
     Raises:
@@ -16,28 +18,18 @@ def get_step_path():
     Returns:
         str: The output of the 'step path' command.
     """
-    try:
-        result = subprocess.run(
-            ["step", "path"],
-            check=True,
-            capture_output=True,
-            text=True
-        )
-        return result.stdout.strip()
-    except subprocess.CalledProcessError as error:
-        raise RuntimeError(
-            f"Failed to execute 'step path': {error.stderr.strip()}"
-        )
+    result = run_command(["step", "path"], check=True)
+    return result.stdout.strip()
 
 
-def read_json_file(json_file):
+def read_json_file(json_file: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     """Reads and parses a JSON configuration file.
 
     Args:
-        json_file (str): Path to the JSON file.
+        json_file: Path to the JSON file.
 
     Returns:
-        Tuple[Optional[dict], Optional[str]]: Parsed data and error message.
+        Tuple containing the parsed data (or None) and an error message (or None).
     """
     path = Path(json_file)
 
@@ -60,12 +52,12 @@ def read_json_file(json_file):
         return None, f"Invalid data in file: {value_error}"
 
 
-def save_json_file(json_path, data):
+def save_json_file(json_path: str, data: Dict[str, Any]) -> Dict[str, Any]:
     """Save JSON data to a file.
 
     Args:
-        json_path (str): The file path where the data will be saved.
-        data (dict): The JSON-serializable data to write.
+        json_path: The file path where the data will be saved.
+        data: The JSON-serializable data to write.
 
     Returns:
         dict: Success or error information.
