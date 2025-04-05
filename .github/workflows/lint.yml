@@ -1,0 +1,38 @@
+---
+name: Lint (Ansible & Python)
+
+"on":
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install linting tools
+        run: |
+          pip install ansible ansible-lint yamllint flake8
+
+      - name: Lint Ansible roles
+        run: |
+          ansible-lint roles/
+          ansible-lint plugins/
+
+      - name: Lint YAML files
+        run: |
+          yamllint .
+
+      - name: Lint Python code
+        run: |
+          flake8 plugins/

@@ -34,8 +34,9 @@ def run_command_as_user(
     Args:
         command (List[str]): The command to execute as a list of args.
         debug (bool): If True, print the command before executing.
-        env_vars (Optional[Dict[str, str]]): Additional environment variables
-            to include during execution. These will override any inherited ones.
+        env_vars (Optional[Dict[str, str]]): Additional environment
+            variables to include during execution. These will override
+            any inherited ones.
         shell (bool): Whether to run the command using the shell.
         username (Optional[str]): The target system user to impersonate.
 
@@ -51,14 +52,17 @@ def run_command_as_user(
     if username:
         if os.geteuid() != 0:
             raise RuntimeError(
-                f"Unable to switch to user '{username}'. "
-                "This operation requires root privileges (use 'become: true' in your playbook)."
+                f"Unable to switch to user '{username}'. This operation "
+                "requires root privileges (use 'become: true' in your "
+                "playbook)."
             )
 
         try:
             pw_record = pwd.getpwnam(username)
         except KeyError as exc:
-            raise RuntimeError(f"User '{username}' not found on the system.") from exc
+            raise RuntimeError(
+                f"User '{username}' not found on the system."
+            ) from exc
 
         user_uid = pw_record.pw_uid
         user_gid = pw_record.pw_gid

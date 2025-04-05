@@ -1,3 +1,4 @@
+---
 - name: Ensure step group
   ansible.builtin.user:
     name: step

@@ -1,6 +1,5 @@
-"""
-Utility functions for working with the 'step' command.
-"""
+"""Utility functions for working with the 'step' command."""
+
 import json
 import subprocess
 from pathlib import Path
@@ -19,15 +18,27 @@ def get_step_path():
     """
     try:
         result = subprocess.run(
-            ["step", "path"], check=True, capture_output=True, text=True
+            ["step", "path"],
+            check=True,
+            capture_output=True,
+            text=True
         )
         return result.stdout.strip()
     except subprocess.CalledProcessError as error:
-        raise RuntimeError(f"Failed to execute 'step path': {error.stderr.strip()}")
+        raise RuntimeError(
+            f"Failed to execute 'step path': {error.stderr.strip()}"
+        )
 
 
 def read_json_file(json_file):
-    """Reads and parses a JSON configuration file."""
+    """Reads and parses a JSON configuration file.
+
+    Args:
+        json_file (str): Path to the JSON file.
+
+    Returns:
+        Tuple[Optional[dict], Optional[str]]: Parsed data and error message.
+    """
     path = Path(json_file)
 
     if not path.exists():
@@ -50,7 +61,15 @@ def read_json_file(json_file):
 
 
 def save_json_file(json_path, data):
-    """Save JSON data to a file."""
+    """Save JSON data to a file.
+
+    Args:
+        json_path (str): The file path where the data will be saved.
+        data (dict): The JSON-serializable data to write.
+
+    Returns:
+        dict: Success or error information.
+    """
     try:
         with open(json_path, "w", encoding=ENCODING) as file:
             json.dump(data, file, indent=4)

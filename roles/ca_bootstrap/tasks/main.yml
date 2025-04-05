@@ -1,3 +1,4 @@
+---
 - name: Include OS family specific install tasks
   ansible.builtin.include_tasks:
     file: "install_{{ ansible_os_family }}.yml"

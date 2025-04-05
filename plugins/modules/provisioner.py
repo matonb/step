@@ -123,7 +123,8 @@ def get_argument_spec() -> dict:
         "ca_path": {
             "type": "path",
             "required": False,
-            "description": "Sets the STEPPATH environment variable before executing step commands.",
+            "description":
+                "Sets the STEPPATH environment variable before executing step commands.",
         },
         "ca_root": {"type": "path", "required": False},
         "ca_url": {"type": "str", "required": False},
