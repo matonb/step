@@ -1,8 +1,9 @@
 """
-Ansible module for loading and modifying a JSON file.
+Ansible module for manipulating step configuration JSON files.
 
 This module takes a JSON file path and a dictionary of updates,
 modifies the JSON file, and saves the changes.
+Note: Step CA usually needs restarting after configuration changes.
 """
 
 import json
