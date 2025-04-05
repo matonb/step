@@ -3,17 +3,17 @@
 import os
 import pathlib
 import re
-import select
-import subprocess
-import time
-from typing import Tuple, Optional
+from typing import Optional, Tuple
 
 from ansible.module_utils.basic import AnsibleModule
+from ansible_collections.matonb.step.plugins.module_utils.process import (
+    run_command, CommandTimeout
+)
 
 
 DOCUMENTATION = r"""
 ---
-module: initialise
+module: initialize
 short_description: A brief description of your module
 version_added: "1.0.0"
 description:
@@ -30,7 +30,7 @@ author:
 
 EXAMPLES = r"""
 - name: Example usage of my module
-  matonb.step.initialise:
+  matonb.step.initialize:
     name: "example"
 """
 
@@ -40,99 +40,6 @@ changed:
   returned: always
   type: bool
 """
-
-
-class CommandTimeout(TimeoutError):
-    """Exception raised when a command execution exceeds the timeout."""
-
-    def __init__(self, message, stdout=None, stderr=None):
-        """Initialize CommandTimeout with message and captured output.
-
-        Parameters
-        ----------
-        message : str
-            The error message
-        stdout : str, optional
-            The captured standard output
-        stderr : str, optional
-            The captured standard error
-        """
-        super().__init__(message)
-        self.stdout = stdout
-        self.stderr = stderr
-
-
-def run_command(command: str, timeout: int) -> Tuple[int, str, str]:
-    """Execute a command using Popen with a timeout.
-
-    Parameters
-    ----------
-    command : str
-        The shell command to execute
-    timeout : int
-        The time limit in seconds before terminating the process
-
-    Returns
-    -------
-    Tuple[int, str, str]
-        A tuple containing return code, stdout, and stderr
-
-    Raises
-    ------
-    CommandTimeout
-        If the command execution exceeds the timeout
-    """
-    # Start the process
-    with subprocess.Popen(
-        command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    ) as process:
-        start_time = time.time()
-
-        # Prepare buffers for stdout and stderr
-        stdout_lines = []
-        stderr_lines = []
-        killed = False
-
-        while True:
-            # Check if the process has completed
-            if process.poll() is not None:
-                break
-
-            # Process readline functions are blocking if no data is available
-            # Use select to check if there's data ready to be read
-            rlist, _, _ = select.select([process.stdout, process.stderr], [], [], 0.1)
-
-            for r in rlist:
-                if r == process.stdout:
-                    line = process.stdout.readline()
-                    if line:
-                        stdout_lines.append(line.decode("utf-8"))
-                elif r == process.stderr:
-                    line = process.stderr.readline()
-                    if line:
-                        stderr_lines.append(line.decode("utf-8"))
-
-            # If timeout is exceeded, kill the process
-            if time.time() - start_time > timeout:
-                process.kill()
-                killed = True
-                break
-
-            time.sleep(0.1)  # Avoid maxing out CPU usage
-
-        if killed:
-            raise CommandTimeout(
-                f"Timed out after {timeout} seconds",
-                "\n".join(stdout_lines),
-                "\n".join(stderr_lines),
-            )
-
-        # If the process finished, read any remaining output
-        stdout, stderr = process.communicate()
-        # Decode the final output
-        stdout_lines.append(stdout.decode("utf-8"))
-        stderr_lines.append(stderr.decode("utf-8"))
-        return process.returncode, "\n".join(stdout_lines), "\n".join(stderr_lines)
 
 
 def run_step_ca_initialize(params, module) -> Optional[Tuple[int, str, str]]:
@@ -211,17 +118,21 @@ def run_step_ca_initialize(params, module) -> Optional[Tuple[int, str, str]]:
         for dns_entry in params["dns"]:
             build_cmd.extend(["--dns", dns_entry])
 
-    cmd = " ".join(build_cmd)
-    module.log("Executing: " + cmd)
+    module.log("Executing: " + " ".join(build_cmd))
 
     try:
-        rc, stdout, stderr = run_command(cmd, timeout=timeout)
-        return rc, stdout, stderr
+        result = run_command(
+            command=build_cmd,
+            timeout=timeout,
+            debug=True,
+            check=False  # We'll handle the return code ourselves
+        )
+        return result.returncode, result.stdout, result.stderr
 
     except CommandTimeout as exc:
         # Handle timeout with potential prompt detection
         prompt_pattern = r"(Please enter|Would you like to|\[y/n\])"
-        if re.search(prompt_pattern, exc.stdout):
+        if re.search(prompt_pattern, exc.stdout or ""):
             module.fail_json(msg="Detected user input prompt")
         module.fail_json(
             msg=f"Step CA initialization timed out after {timeout} seconds."
