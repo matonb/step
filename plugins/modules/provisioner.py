@@ -73,7 +73,8 @@ options:
     required: false
     type: str
     choices: [JWK, OIDC, AWS, GCP, Azure, ACME, X5C, K8SSA, SSHPOP, SCEP, Nebula]
-author: you
+author:
+  - Brett Maton (@matonb)
 """
 
 RETURN = r"""
