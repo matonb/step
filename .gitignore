@@ -1,0 +1,80 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Ansible specific
+*.retry
+*.galaxy_install_info
+ansible.log
+ansible-test-*.log
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.python-version
+
+# Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+.coverage
+.coverage.*
+.pytest_cache/
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.pytest_cache/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Release/build artifacts
+.build/
+output/
+releases/
+
+# Temporary files
+tmp/
+temp/
+
+# Secrets and local config
+*.pem
+*.key
+*.secret
+*.password
+secrets.yml
+local_settings.py
+local_config.yml
+
+# virtualenv for tests/locally installed development dependencies
+/venv/
+
