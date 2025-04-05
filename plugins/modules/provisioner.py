@@ -31,6 +31,12 @@ options:
   ca_path:
     description:
       - Optional path to the step CA configuration directory.
+      - Sets the STEPPATH environment variable before executing step commands.
+    required: false
+    type: path
+  ca_root:
+    description:
+      - Optional path to the CA root certificate.
     required: false
     type: path
   ca_url:
@@ -60,6 +66,7 @@ options:
       - This should usually be the user that owns the Step CA instance (commonly C(step)).
     required: false
     type: str
+    default: null
   state:
     description:
       - Desired state.
