@@ -20,7 +20,9 @@ from typing import Dict, List, Optional, Union
 class CommandTimeout(TimeoutError):
     """Exception raised when a command execution exceeds the timeout."""
 
-    def __init__(self, message: str, stdout: Optional[str] = None, stderr: Optional[str] = None):
+    def __init__(
+        self, message: str, stdout: Optional[str] = None, stderr: Optional[str] = None
+    ):
         """Initialize CommandTimeout with message and captured output.
 
         Args:
@@ -83,19 +85,19 @@ def run_command(
         try:
             pw_record = pwd.getpwnam(username)
         except KeyError as exc:
-            raise RuntimeError(
-                f"User '{username}' not found on the system."
-            ) from exc
+            raise RuntimeError(f"User '{username}' not found on the system.") from exc
 
         user_uid = pw_record.pw_uid
         user_gid = pw_record.pw_gid
         user_home = pw_record.pw_dir
 
-        user_env.update({
-            "HOME": user_home,
-            "USER": username,
-            "LOGNAME": username,
-        })
+        user_env.update(
+            {
+                "HOME": user_home,
+                "USER": username,
+                "LOGNAME": username,
+            }
+        )
 
         def demote():
             os.setgid(user_gid)
@@ -203,9 +205,7 @@ def _run_with_timeout(
                 break
 
             # Use select to check for available data with a small timeout
-            rlist, _, _ = select.select(
-                [process.stdout, process.stderr], [], [], 0.1
-            )
+            rlist, _, _ = select.select([process.stdout, process.stderr], [], [], 0.1)
 
             # Read any available data
             for stream in rlist:
