@@ -11,9 +11,8 @@ Note:
 
 import os
 import pwd
-import select
+import re
 import subprocess
-import time
 from typing import Dict, List, Optional, Union
 
 
@@ -35,6 +34,70 @@ class CommandTimeout(TimeoutError):
         self.stderr = stderr
 
 
+def strip_ansi_sequences(text):
+    """Remove ANSI escape sequences used for terminal colors and formatting."""
+    # This pattern matches all ANSI escape sequences
+    ansi_pattern = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+    return ansi_pattern.sub("", text) if text else text
+
+
+def sanitize_output(text: Optional[str], strip_ansi: bool = True) -> Optional[str]:
+    """
+    Sanitize command output by optionally stripping ANSI sequences
+    and performing additional safety checks.
+
+    Args:
+        text: The text to sanitize
+        strip_ansi: Whether to remove ANSI escape sequences
+
+    Returns:
+        Sanitized text or None
+    """
+    if text is None:
+        return None
+
+    # Optional ANSI sequence stripping
+    if strip_ansi:
+        text = strip_ansi_sequences(text)
+
+    # Remove or replace any potentially dangerous control characters
+    text = "".join(char for char in text if char.isprintable() or char in "\n\r\t")
+
+    return text
+
+
+def demote_user(username: str):
+    """
+    Demote the current process to the specified user's privileges.
+
+    Args:
+        username: The target system user to impersonate.
+
+    Raises:
+        RuntimeError: If the user cannot be found or privileges cannot be dropped.
+    """
+    try:
+        pw_record = pwd.getpwnam(username)
+    except KeyError as exc:
+        raise RuntimeError(f"User '{username}' not found on the system.") from exc
+
+    try:
+        # First change GID, then UID to prevent permission issues
+        os.setgid(pw_record.pw_gid)
+        os.setuid(pw_record.pw_uid)
+    except OSError as exc:
+        raise RuntimeError(f"Failed to switch to user '{username}': {exc}") from exc
+
+    # Update environment variables to reflect the new user
+    os.environ.update(
+        {
+            "HOME": pw_record.pw_dir,
+            "USER": username,
+            "LOGNAME": username,
+        }
+    )
+
+
 def run_command(
     command: Union[List[str], str],
     debug: bool = False,
@@ -44,25 +107,21 @@ def run_command(
     timeout: Optional[float] = None,
     check: bool = True,
     text: bool = True,
+    strip_ansi: bool = True,
 ) -> subprocess.CompletedProcess:
     """
-    Run a command optionally as another system user with timeout support.
-
-    If a username is provided, the process is demoted to the target
-    user's UID/GID using os.setuid and os.setgid. The environment is
-    updated with standard variables such as HOME, USER, and LOGNAME
-    based on the user's passwd entry.
+    Run a command optionally as another system user with timeout support and output sanitization.
 
     Args:
         command: The command to execute as a list of args or a string.
         debug: If True, print the command before executing.
         env_vars: Additional environment variables to include during execution.
-            These will override any inherited ones.
         shell: Whether to run the command using the shell.
         username: The target system user to impersonate.
         timeout: Maximum time in seconds to wait for the command to complete.
         check: If True, raise a RuntimeError if the command returns a non-zero exit code.
         text: If True, decode stdout and stderr as text instead of bytes.
+        strip_ansi: If True, remove ANSI escape sequences from output.
 
     Returns:
         subprocess.CompletedProcess: The result of the command execution.
@@ -71,80 +130,92 @@ def run_command(
         RuntimeError: If the user switch fails or the command fails.
         CommandTimeout: If the command execution exceeds the timeout.
     """
-    user_env = os.environ.copy()
-    preexec_fn = None
-
-    if username:
-        if os.geteuid() != 0:
-            raise RuntimeError(
-                f"Unable to switch to user '{username}'. This operation "
-                "requires root privileges (use 'become: true' in your "
-                "playbook)."
-            )
-
-        try:
-            pw_record = pwd.getpwnam(username)
-        except KeyError as exc:
-            raise RuntimeError(f"User '{username}' not found on the system.") from exc
-
-        user_uid = pw_record.pw_uid
-        user_gid = pw_record.pw_gid
-        user_home = pw_record.pw_dir
-
-        user_env.update(
-            {
-                "HOME": user_home,
-                "USER": username,
-                "LOGNAME": username,
-            }
+    # Validate root privileges before user switch
+    if username and os.geteuid() != 0:
+        raise RuntimeError(
+            f"Unable to switch to user '{username}'. This operation "
+            "requires root privileges (use 'become: true' in your "
+            "playbook)."
         )
 
-        def demote():
-            os.setgid(user_gid)
-            os.setuid(user_uid)
-
-        preexec_fn = demote
-
+    # Prepare environment
+    user_env = os.environ.copy()
     if env_vars:
         user_env.update(env_vars)
 
+    # Debug output
     if debug:
         cmd_str = command if isinstance(command, str) else " ".join(command)
         print(f"Executing command: {cmd_str}")
 
-    # If timeout is specified, use the select-based approach for better timeout handling
+    # If timeout is specified, use the select-based approach
     if timeout is not None:
         return _run_with_timeout(
             command=command,
             timeout=timeout,
             env=user_env,
-            preexec_fn=preexec_fn,
+            username=username,
             shell=shell,
             text=text,
             check=check,
+            strip_ansi=strip_ansi,
         )
 
     # Otherwise, use the simpler subprocess.run approach
     try:
-        return subprocess.run(
+        # Use subprocess.Popen for more controlled execution
+        with subprocess.Popen(
             command,
-            preexec_fn=preexec_fn,
-            env=user_env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            env=user_env,
             text=text,
             shell=shell,
-            check=check,
-        )
+            preexec_fn=lambda: demote_user(username) if username else None,
+        ) as process:
+            # Wait for the process to complete
+            stdout, stderr = process.communicate()
+
+            # Sanitize output if text is True
+            if text:
+                stdout = sanitize_output(stdout, strip_ansi)
+                stderr = sanitize_output(stderr, strip_ansi)
+
+            # Create CompletedProcess manually
+            result = subprocess.CompletedProcess(
+                args=command,
+                returncode=process.returncode,
+                stdout=stdout,
+                stderr=stderr,
+            )
+
+            # Check return code if required
+            if check and process.returncode != 0:
+                raise RuntimeError(
+                    f"Command failed with return code {process.returncode}.\n"
+                    f"STDOUT: {stdout}\n"
+                    f"STDERR: {stderr}"
+                )
+
+            return result
+
     except subprocess.CalledProcessError as exc:
         if check:
-            stderr = exc.stderr.strip() if text else exc.stderr
-            stdout = exc.stdout.strip() if text else exc.stdout
+            # Sanitize stdout and stderr
+            stderr = sanitize_output(exc.stderr, strip_ansi) if text else exc.stderr
+            stdout = sanitize_output(exc.stdout, strip_ansi) if text else exc.stdout
+
             raise RuntimeError(
                 f"Command failed with return code {exc.returncode}.\n"
                 f"STDOUT: {stdout}\n"
                 f"STDERR: {stderr}"
             ) from exc
+
+        # Sanitize stdout and stderr for the exception case
+        if text:
+            exc.stdout = sanitize_output(exc.stdout, strip_ansi)
+            exc.stderr = sanitize_output(exc.stderr, strip_ansi)
+
         return exc
 
 
@@ -152,25 +223,24 @@ def _run_with_timeout(
     command: Union[List[str], str],
     timeout: float,
     env: Dict[str, str],
-    preexec_fn: Optional[callable] = None,
+    username: Optional[str] = None,
     shell: bool = False,
     text: bool = True,
     check: bool = True,
+    strip_ansi: bool = True,
 ) -> subprocess.CompletedProcess:
     """
-    Execute a command with advanced timeout handling using select.
-
-    This implementation monitors stdout and stderr in real-time and
-    can capture partial output even if the command times out.
+    Execute a command with advanced timeout handling.
 
     Args:
         command: The command to execute.
         timeout: Maximum time in seconds to wait for the command to complete.
         env: Environment variables for the command.
-        preexec_fn: Function to call in the child process before execution.
+        username: Optional user to run the command as.
         shell: Whether to run the command through the shell.
         text: If True, decode output as text.
         check: If True, raise an exception on non-zero exit codes.
+        strip_ansi: If True, remove ANSI escape sequences from output.
 
     Returns:
         subprocess.CompletedProcess: Object containing execution results.
@@ -180,100 +250,65 @@ def _run_with_timeout(
         subprocess.CalledProcessError: If the command returns non-zero and check=True.
     """
     # Start the process
-    with subprocess.Popen(
+    process = subprocess.Popen(
         command,
         shell=shell,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         env=env,
-        preexec_fn=preexec_fn,
-        text=False,  # We'll handle text conversion ourselves
-    ) as process:
-        start_time = time.time()
+        text=text,
+        preexec_fn=lambda: demote_user(username) if username else None,
+    )
 
-        # Prepare buffers for stdout and stderr
-        stdout_chunks = []
-        stderr_chunks = []
+    try:
+        # Wait for the process to complete or timeout
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            # Kill the process and get any remaining output
+            process.kill()
+            stdout, stderr = process.communicate()
 
-        # Track if we killed the process due to timeout
-        killed = False
+            # Sanitize output if text is True
+            if text:
+                stdout = sanitize_output(stdout, strip_ansi)
+                stderr = sanitize_output(stderr, strip_ansi)
 
-        # Monitor stdout and stderr using select
-        while True:
-            # Check if the process has completed naturally
-            if process.poll() is not None:
-                break
-
-            # Use select to check for available data with a small timeout
-            rlist, _, _ = select.select([process.stdout, process.stderr], [], [], 0.1)
-
-            # Read any available data
-            for stream in rlist:
-                if stream == process.stdout:
-                    chunk = process.stdout.read1(1024)
-                    if chunk:
-                        stdout_chunks.append(chunk)
-                elif stream == process.stderr:
-                    chunk = process.stderr.read1(1024)
-                    if chunk:
-                        stderr_chunks.append(chunk)
-
-            # Check if we've exceeded the timeout
-            if time.time() - start_time > timeout:
-                process.kill()
-                killed = True
-                break
-
-            # Short sleep to avoid CPU thrashing
-            time.sleep(0.01)
-
-        # Read any remaining data after process completion or timeout
-        stdout_remainder, stderr_remainder = process.communicate()
-        if stdout_remainder:
-            stdout_chunks.append(stdout_remainder)
-        if stderr_remainder:
-            stderr_chunks.append(stderr_remainder)
-
-        # Combine all captured output
-        stdout_bytes = b"".join(stdout_chunks)
-        stderr_bytes = b"".join(stderr_chunks)
-
-        # Convert to text if requested
-        if text:
-            stdout_result = stdout_bytes.decode("utf-8", errors="replace")
-            stderr_result = stderr_bytes.decode("utf-8", errors="replace")
-        else:
-            stdout_result = stdout_bytes
-            stderr_result = stderr_bytes
-
-        # If process was killed due to timeout, raise exception
-        if killed:
             raise CommandTimeout(
                 f"Command timed out after {timeout} seconds",
-                stdout=stdout_result,
-                stderr=stderr_result,
+                stdout=stdout,
+                stderr=stderr,
             )
+
+        # Sanitize output if text is True
+        if text:
+            stdout = sanitize_output(stdout, strip_ansi)
+            stderr = sanitize_output(stderr, strip_ansi)
 
         # Create a CompletedProcess object with the results
         result = subprocess.CompletedProcess(
             args=command,
             returncode=process.returncode,
-            stdout=stdout_result,
-            stderr=stderr_result,
+            stdout=stdout,
+            stderr=stderr,
         )
 
         # Handle non-zero return code if check is True
         if check and process.returncode != 0:
-            exc = subprocess.CalledProcessError(
-                process.returncode, command, stdout_result, stderr_result
-            )
             raise RuntimeError(
-                f"Command failed with return code {exc.returncode}.\n"
-                f"STDOUT: {stdout_result.strip() if text else stdout_result}\n"
-                f"STDERR: {stderr_result.strip() if text else stderr_result}"
-            ) from exc
+                f"Command failed with return code {process.returncode}.\n"
+                f"STDOUT: {stdout.strip() if text else stdout}\n"
+                f"STDERR: {stderr.strip() if text else stderr}"
+            )
 
         return result
+
+    finally:
+        # Ensure the process is terminated
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            pass
 
 
 # For backward compatibility

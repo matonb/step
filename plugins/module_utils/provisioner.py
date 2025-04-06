@@ -14,7 +14,6 @@ environments.
 """
 
 import json
-import logging
 import os
 import pwd
 import stat
@@ -25,8 +24,6 @@ from typing import Dict, List, Optional, Tuple, Type
 
 from .process import run_command
 from .utils import generate_secure_password
-
-logging.basicConfig(level=logging.DEBUG)
 
 
 @dataclass
@@ -127,17 +124,12 @@ class JWKProvisioner(Provisioner):
             try:
                 user_info = pwd.getpwnam(context.run_as)
                 os.chown(password_file, user_info.pw_uid, user_info.pw_gid)
-            except (KeyError, OSError) as e:
+            except (KeyError, OSError):
                 os.chmod(
                     password_file,
                     stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH,
                 )
-                logging.warning(
-                    "Could not change ownership of password file to %s: %s. "
-                    "Using less secure permissions as fallback.",
-                    context.run_as,
-                    e,
-                )
+
         # Add password file option
         command = base_command.copy()
         command.extend(["--password-file", password_file])
@@ -234,38 +226,21 @@ class StepCAContext:
         """
         command = self._extend_command(["step", "ca", "provisioner", "list"])
         try:
-            logging.debug("Executing command: %s", command)
             result = run_command(
                 command,
                 username=self.run_as,
                 env_vars=self._build_env(),
                 debug=self.debug,
             )
-            logging.debug(
-                "Command stdout: %s",
-                (
-                    result.stdout[:100] + "..."
-                    if len(result.stdout) > 100
-                    else result.stdout
-                ),
-            )
             raw_data = json.loads(result.stdout)
-            logging.debug("Parsed %d provisioners from output", len(raw_data))
         except json.JSONDecodeError as err:
             raise RuntimeError("Failed to parse JSON from step output.") from err
 
         provisioners: List[Provisioner] = []
-        for i, item in enumerate(raw_data):
+        for _, item in enumerate(raw_data):
             ptype = item.get("type")
-            logging.debug("Processing provisioner %d of type: %s", i, ptype)
-            logging.debug("Raw provisioner data: %s", json.dumps(item, indent=2)[:200])
-            logging.debug(
-                "Available provisioner types: %s", list(_PROVISIONER_CLASSES.keys())
-            )
-
             cls = _PROVISIONER_CLASSES.get(ptype)
             if cls is None:
-                logging.warning("Unknown provisioner type: %s, skipping", ptype)
                 continue
 
             init_args = {
@@ -278,19 +253,8 @@ class StepCAContext:
                 init_args["key"] = item.get("key", {})
                 init_args["encryptedKey"] = item.get("encryptedKey", "")
 
-            logging.debug(
-                "Creating provisioner with args: %s",
-                {k: "..." if k == "key" else v for k, v in init_args.items()},
-            )
-            try:
-                provisioner = cls(**init_args)
-                provisioners.append(provisioner)
-                logging.debug("Successfully added provisioner of type %s", ptype)
-            except Exception as e:
-                logging.error(
-                    "Failed to create provisioner of type %s: %s", ptype, str(e)
-                )
-                raise
+            provisioner = cls(**init_args)
+            provisioners.append(provisioner)
 
         return provisioners
 
@@ -340,26 +304,10 @@ class StepCAContext:
             RuntimeError: If the CLI command fails.
             ValueError: If the provisioner type is not supported.
         """
-
-        logging.debug("Adding provisioner of type: %s", provisioner_type)
-        logging.debug(
-            "Available provisioner types: %s", list(_PROVISIONER_CLASSES.keys())
-        )
-
         provisioner_class = _PROVISIONER_CLASSES.get(provisioner_type)
         if provisioner_class is None:
-            logging.error(
-                "Unsupported provisioner type: %s. Available types: %s",
-                provisioner_type,
-                list(_PROVISIONER_CLASSES.keys()),
-            )
             raise ValueError(f"Unsupported provisioner type: {provisioner_type}")
 
-        logging.debug(
-            "Using class %s for provisioner type %s",
-            provisioner_class.__name__,
-            provisioner_type,
-        )
         # Create base command
         base_command = self._extend_command(
             [
@@ -383,15 +331,7 @@ class StepCAContext:
             base_command.extend(["--x509-default-dur", x509_default])
 
         # Create the provisioner instance
-        try:
-            provisioner = provisioner_class(name=name, type=provisioner_type)
-            logging.debug(
-                "Successfully created provisioner instance of class %s",
-                provisioner_class.__name__,
-            )
-        except Exception as e:
-            logging.error("Failed to create provisioner instance: %s", str(e))
-            raise
+        provisioner = provisioner_class(name=name, type=provisioner_type)
 
         password_file = None
         try:
@@ -415,9 +355,7 @@ class StepCAContext:
                 try:
                     os.remove(password_file)
                 except OSError:
-                    logging.warning(
-                        "Failed to remove temporary password file: %s", password_file
-                    )
+                    pass
 
 
 # Fixed the protected class access warning by elevating the classes to the module level
