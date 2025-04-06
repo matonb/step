@@ -1,3 +1,11 @@
+"""
+Ansible module for managing step-ca provisioners.
+
+This module allows creating, removing, and querying provisioners
+in a step-ca certificate authority. It supports different provisioner
+types including JWK and ACME.
+"""
+
 from __future__ import absolute_import, division, print_function
 
 __metaclass__ = type
@@ -312,44 +320,6 @@ def main() -> None:
         # Only include the password in the result if it was generated and not None
         if used_password and password is None:
             result["generated_password"] = used_password
-
-        # DEBUG
-        try:
-            import os
-            import json
-
-            # Save the raw result to a file for inspection
-            debug_dir = "/tmp/ansible_debug"
-            os.makedirs(debug_dir, exist_ok=True)
-
-            # Save the raw result object
-            with open(f"{debug_dir}/raw_result.json", "w") as f:
-                json.dump(result, f, indent=2)
-
-            # Also save a text representation with character positions
-            with open(f"{debug_dir}/raw_result_with_positions.txt", "w") as f:
-                raw_json = json.dumps(result)
-                # Add character position markers every 10 characters
-                for i, char in enumerate(raw_json):
-                    if i % 10 == 0:
-                        f.write(f"\n{i}: ")
-                    f.write(char)
-
-            # Handle any specific values that might be problematic
-            if "generated_password" in result:
-                with open(f"{debug_dir}/generated_password.txt", "w") as f:
-                    pwd = result["generated_password"]
-                    f.write(f"Password: {pwd}\n")
-                    f.write(
-                        f"Hex representation: {' '.join(hex(ord(c)) for c in pwd)}\n"
-                    )
-
-            # Print path to debug files
-            print(f"Debug files saved to: {debug_dir}")
-
-        except Exception as e:
-            # Don't let our debugging code cause failures
-            print(f"Debug code error: {str(e)}")
 
         module.exit_json(**result)
     except Exception as e:
