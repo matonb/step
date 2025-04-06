@@ -4,6 +4,8 @@ __metaclass__ = type
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.matonb.step.plugins.module_utils.provisioner import (
+    ACMEProvisioner,
+    JWKProvisioner,
     StepCAContext,
 )
 
@@ -274,25 +276,25 @@ def main() -> None:
             # and provisioner_type is specified
             used_password = context.add_provisioner(
                 name=name,
+                password=password,
                 provisioner_type=provisioner_type,
                 x509_min=x509_min,
                 x509_max=x509_max,
                 x509_default=x509_default,
-                password=password,
             )
             changed = True
             restart_required = True
-            # After restart, this provisioner will be available
-            # We can construct what it would look like
-            from ansible_collections.matonb.step.plugins.module_utils.provisioner import (
-                Provisioner,
-            )
 
-            new_provisioner = Provisioner(
-                name=name,
-                type=provisioner_type,
-            )
-            matched = [new_provisioner]
+            # After restart, this provisioner will be available
+            # Choose the proper concrete class based on the provisioner type
+            if provisioner_type == "JWK":
+                matched = [JWKProvisioner(name=name, type=provisioner_type)]
+            elif provisioner_type == "ACME":
+                matched = [ACMEProvisioner(name=name, type=provisioner_type)]
+            else:
+                module.fail_json(
+                    msg=f"Unsupported provisioner type: {provisioner_type}"
+                )
         elif state == "present" and not provisioner_type:
             module.fail_json(
                 msg="Parameter 'type' is required when state is 'present' and the provisioner doesn't exist."
@@ -310,6 +312,44 @@ def main() -> None:
         # Only include the password in the result if it was generated and not None
         if used_password and password is None:
             result["generated_password"] = used_password
+
+        # DEBUG
+        try:
+            import os
+            import json
+
+            # Save the raw result to a file for inspection
+            debug_dir = "/tmp/ansible_debug"
+            os.makedirs(debug_dir, exist_ok=True)
+
+            # Save the raw result object
+            with open(f"{debug_dir}/raw_result.json", "w") as f:
+                json.dump(result, f, indent=2)
+
+            # Also save a text representation with character positions
+            with open(f"{debug_dir}/raw_result_with_positions.txt", "w") as f:
+                raw_json = json.dumps(result)
+                # Add character position markers every 10 characters
+                for i, char in enumerate(raw_json):
+                    if i % 10 == 0:
+                        f.write(f"\n{i}: ")
+                    f.write(char)
+
+            # Handle any specific values that might be problematic
+            if "generated_password" in result:
+                with open(f"{debug_dir}/generated_password.txt", "w") as f:
+                    pwd = result["generated_password"]
+                    f.write(f"Password: {pwd}\n")
+                    f.write(
+                        f"Hex representation: {' '.join(hex(ord(c)) for c in pwd)}\n"
+                    )
+
+            # Print path to debug files
+            print(f"Debug files saved to: {debug_dir}")
+
+        except Exception as e:
+            # Don't let our debugging code cause failures
+            print(f"Debug code error: {str(e)}")
 
         module.exit_json(**result)
     except Exception as e:
