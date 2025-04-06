@@ -1,6 +1,8 @@
 """Utility functions for working with the 'step' command."""
 
 import json
+import secrets
+import string
 from pathlib import Path
 from typing import Tuple, Optional, Dict, Any
 
@@ -20,6 +22,38 @@ def get_step_path() -> str:
     """
     result = run_command(["step", "path"], check=True)
     return result.stdout.strip()
+
+
+def generate_secure_password(length: int = 32) -> str:
+    """Generate a cryptographically secure random password.
+
+    The password includes uppercase and lowercase letters, digits,
+    and special characters to ensure high security standards.
+
+    Args:
+        length: The length of the password to generate (default: 32).
+
+    Returns:
+        str: A secure random password.
+    """
+    # Define character sets for password complexity
+    alphabet = string.ascii_letters + string.digits + "!@#$%^&*()-_=+[]{}|;:,.<>?"
+
+    # Ensure at least one of each character type for complexity requirements
+    password = [
+        secrets.choice(string.ascii_uppercase),
+        secrets.choice(string.ascii_lowercase),
+        secrets.choice(string.digits),
+        secrets.choice("!@#$%^&*()-_=+[]{}|;:,.<>?"),
+    ]
+
+    # Fill the rest of the password with random characters
+    password.extend(secrets.choice(alphabet) for _ in range(length - 4))
+
+    # Shuffle the password to randomize character positions
+    secrets.SystemRandom().shuffle(password)
+
+    return "".join(password)
 
 
 def read_json_file(json_file: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:

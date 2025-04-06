@@ -14,10 +14,15 @@ environments.
 """
 
 import json
+import os
+import pwd
+import stat
+import tempfile
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Type
 
 from .process import run_command
+from .utils import generate_secure_password
 
 
 @dataclass
@@ -184,7 +189,8 @@ class StepCAContext:
         x509_min: Optional[str] = None,
         x509_max: Optional[str] = None,
         x509_default: Optional[str] = None,
-    ) -> None:
+        password: Optional[str] = None,
+    ) -> Optional[str]:
         """Add a new provisioner via the Step CLI.
 
         Args:
@@ -193,10 +199,18 @@ class StepCAContext:
             x509_min (Optional[str]): Minimum certificate duration for X509 certificates.
             x509_max (Optional[str]): Maximum certificate duration for X509 certificates.
             x509_default (Optional[str]): Default certificate duration for X509 certificates.
+            password (Optional[str]): Password for the provisioner. If not provided,
+                                    a secure password will be generated.
+                                    Not used for ACME provisioners.
+
+        Returns:
+            Optional[str]: The password used for the provisioner (generated or provided),
+                        or None if the provisioner type doesn't require a password (e.g., ACME).
 
         Raises:
             RuntimeError: If the CLI command fails.
         """
+
         command = self._extend_command(
             [
                 "step",
@@ -210,21 +224,82 @@ class StepCAContext:
             ]
         )
 
-        # Add specific X509 duration parameters if provided
-        # These parameters override any set in the StepCAContext
-        if x509_min:
-            command.extend(["--x509-min-dur", x509_min])
-        if x509_max:
-            command.extend(["--x509-max-dur", x509_max])
-        if x509_default:
-            command.extend(["--x509-default-dur", x509_default])
+        # ACME provisioners don't need passwords
+        actual_password = None
+        password_file = None
 
-        run_command(
-            command,
-            username=self.run_as,
-            env_vars=self._build_env(),
-            debug=self.debug,
-        )
+        try:
+            if provisioner_type != "ACME":
+                # Generate a secure password if none is provided
+                actual_password = (
+                    password if password is not None else generate_secure_password()
+                )
+
+                # Create a temporary file to store the password
+                fd, password_file = tempfile.mkstemp(text=True)
+                os.close(fd)
+
+                # Write the password to the file
+                with open(password_file, "w") as f:
+                    f.write(actual_password)
+
+                # Set file permissions to 0600 (readable/writable only by owner)
+                os.chmod(password_file, stat.S_IRUSR | stat.S_IWUSR)
+
+                # If run_as is specified, change ownership of the file to that user
+                if self.run_as:
+                    try:
+                        # Get user information to obtain UID/GID
+                        user_info = pwd.getpwnam(self.run_as)
+                        # Change ownership of the password file
+                        os.chown(password_file, user_info.pw_uid, user_info.pw_gid)
+                    except (KeyError, OSError) as e:
+                        # In case of failure, set world-readable as fallback, but log a warning
+                        os.chmod(
+                            password_file,
+                            stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH,
+                        )
+                        import sys
+
+                        print(
+                            f"Warning: Could not change ownership of password file to {self.run_as}: {e}. "
+                            f"Using less secure permissions as fallback.",
+                            file=sys.stderr,
+                        )
+
+                # Use --password-file option with the temporary file
+                command.extend(["--password-file", password_file])
+
+            # Add specific X509 duration parameters if provided
+            # These parameters override any set in the StepCAContext
+            if x509_min:
+                command.extend(["--x509-min-dur", x509_min])
+            if x509_max:
+                command.extend(["--x509-max-dur", x509_max])
+            if x509_default:
+                command.extend(["--x509-default-dur", x509_default])
+
+            run_command(
+                command,
+                username=self.run_as,
+                env_vars=self._build_env(),
+                debug=self.debug,
+            )
+
+            return actual_password
+        finally:
+            # Clean up the temporary file if it was created
+            if password_file and os.path.exists(password_file):
+                try:
+                    os.remove(password_file)
+                except OSError:
+                    # Log the error but don't raise an exception
+                    import sys
+
+                    print(
+                        f"Warning: Failed to remove temporary password file: {password_file}",
+                        file=sys.stderr,
+                    )
 
 
 _PROVISIONER_CLASSES: Dict[str, Type[Provisioner]] = {

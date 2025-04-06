@@ -60,6 +60,13 @@ options:
       - Name of the provisioner.
     required: true
     type: str
+  password:
+    description:
+      - Optional password for the provisioner.
+      - If not provided when adding a non-ACME provisioner, a secure password will be generated automatically.
+      - Not used for ACME provisioners.
+    required: false
+    type: str
   run_as:
     description:
       - Optional system user to run Step CLI commands as.
@@ -106,6 +113,21 @@ author:
 """
 
 RETURN = r"""
+changed:
+  description: Whether any changes were made (e.g., provisioner removed).
+  returned: success
+  type: bool
+
+generated_password:
+  description: The automatically generated password when no password was provided.
+  returned: when a password is auto-generated
+  type: str
+
+name:
+  description: The name of the provisioner being managed.
+  returned: success
+  type: str
+
 provisioners:
   description: List of provisioners that matched the specified name and (optional) type.
   returned: success
@@ -133,16 +155,6 @@ type:
   description: The type of the provisioner (if provided as a filter).
   returned: success
   type: str
-
-name:
-  description: The name of the provisioner being managed.
-  returned: success
-  type: str
-
-changed:
-  description: Whether any changes were made (e.g., provisioner removed).
-  returned: success
-  type: bool
 """
 
 
@@ -164,6 +176,16 @@ def get_argument_spec() -> dict:
         },
         "fingerprint": {"type": "str", "required": False},
         "name": {"type": "str", "required": True},
+        "password": {
+            "type": "str",
+            "required": False,
+            "no_log": True,
+            "description": (
+                "Optional password for the provisioner. If not provided when adding a "
+                "non-ACME provisioner, a secure password will be generated automatically. "
+                "Not used for ACME provisioners."
+            ),
+        },
         "run_as": {
             "type": "str",
             "required": False,
@@ -207,6 +229,7 @@ def main() -> None:
     ca_url = module.params.get("ca_url")
     debug = module.params.get("debug", False)
     fingerprint = module.params.get("fingerprint")
+    password = module.params.get("password")
     provisioner_type = module.params.get("type")
     state = module.params["state"]
     run_as = module.params.get("run_as")
@@ -236,6 +259,9 @@ def main() -> None:
             if p.name == name and (not provisioner_type or p.type == provisioner_type)
         ]
 
+        # Store the password used (if generated)
+        used_password = None
+
         if state == "absent" and matched:
             # Remove the provisioner if it exists and state is "absent"
             context.remove_provisioner(name)
@@ -246,12 +272,13 @@ def main() -> None:
         elif state == "present" and not matched and provisioner_type:
             # Create the provisioner if it doesn't exist, state is "present",
             # and provisioner_type is specified
-            context.add_provisioner(
+            used_password = context.add_provisioner(
                 name=name,
                 provisioner_type=provisioner_type,
                 x509_min=x509_min,
                 x509_max=x509_max,
                 x509_default=x509_default,
+                password=password,
             )
             changed = True
             restart_required = True
@@ -271,14 +298,20 @@ def main() -> None:
                 msg="Parameter 'type' is required when state is 'present' and the provisioner doesn't exist."
             )
 
-        module.exit_json(
-            changed=changed,
-            restart_required=restart_required,
-            name=name,
-            provisioners=[p.to_dict() for p in matched],
-            state=state,
-            type=provisioner_type,
-        )
+        result = {
+            "changed": changed,
+            "restart_required": restart_required,
+            "name": name,
+            "provisioners": [p.to_dict() for p in matched],
+            "state": state,
+            "type": provisioner_type,
+        }
+
+        # Only include the password in the result if it was generated and not None
+        if used_password and password is None:
+            result["generated_password"] = used_password
+
+        module.exit_json(**result)
     except Exception as e:
         module.fail_json(msg=str(e))
 
