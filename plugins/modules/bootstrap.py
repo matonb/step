@@ -1,3 +1,10 @@
+"""
+Bootstrap a node with step-ca root certificate.
+
+This Ansible module bootstraps a step-ca node by installing the root certificates
+and optionally installing the step-cli tool.
+"""
+
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.matonb.step.plugins.module_utils.utils import (
     read_json_file,
@@ -5,7 +12,7 @@ from ansible_collections.matonb.step.plugins.module_utils.utils import (
 
 
 def main():
-    """Main function for the Ansible module."""
+    """Run the Ansible module."""
     module_args = {
         "config_file": {"type": "str", "required": True}
     }

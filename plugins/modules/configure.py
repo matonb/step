@@ -1,5 +1,5 @@
 """
-Ansible module for manipulating step configuration JSON files.
+Modify a step-ca configuration JSON file with provided updates.
 
 This module takes a JSON file path and a dictionary of updates,
 modifies the JSON file, and saves the changes.
@@ -37,7 +37,7 @@ def save_json_file(json_path, data):
 
 
 def main():
-    """Main function to execute the Ansible module logic."""
+    """Run the Ansible module."""
     module_args = {
         "ca_config": {
             "type": "path", "required": False, "default": None
