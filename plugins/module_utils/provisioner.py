@@ -1,4 +1,6 @@
 """
+Step CA provisioner dataclasses.
+
 This module defines dataclasses and helper classes for managing
 Step CA provisioners.
 

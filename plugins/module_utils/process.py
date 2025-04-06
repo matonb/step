@@ -43,6 +43,8 @@ def strip_ansi_sequences(text):
 
 def sanitize_output(text: Optional[str], strip_ansi: bool = True) -> Optional[str]:
     """
+    Sanitize command output.
+
     Sanitize command output by optionally stripping ANSI sequences
     and performing additional safety checks.
 

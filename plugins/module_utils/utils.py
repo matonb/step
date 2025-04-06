@@ -57,7 +57,7 @@ def generate_secure_password(length: int = 32) -> str:
 
 
 def read_json_file(json_file: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-    """Reads and parses a JSON configuration file.
+    """Read and parses a JSON configuration file.
 
     Args:
         json_file: Path to the JSON file.

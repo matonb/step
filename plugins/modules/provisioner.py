@@ -1,7 +1,7 @@
 """
-Ansible module for managing step-ca provisioners.
+Manage step-ca provisioners.
 
-This module allows creating, removing, and querying provisioners
+This Ansible module allows creating, removing, and querying provisioners
 in a step-ca certificate authority. It supports different provisioner
 types including JWK and ACME.
 """
@@ -230,7 +230,7 @@ def get_argument_spec() -> dict:
 
 
 def main() -> None:
-    """Main entry point for the provisioner Ansible module."""
+    """Run the Ansible module."""
     module = AnsibleModule(argument_spec=get_argument_spec(), supports_check_mode=True)
 
     name = module.params["name"]

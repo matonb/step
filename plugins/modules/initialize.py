@@ -1,4 +1,4 @@
-"""Ansible module to initialize a Step CA instance."""
+"""Initialize a Step CA instance."""
 
 import os
 import pathlib
@@ -331,7 +331,7 @@ def run_step_ca_initialize(module: AnsibleModule) -> None:
 
 
 def main() -> None:
-    """Main entry point for the Ansible module."""
+    """Run the Ansible module."""
     module = AnsibleModule(argument_spec=get_argument_spec(), supports_check_mode=True)
 
     # Ensure STEPPATH is set when we invoke the step command
