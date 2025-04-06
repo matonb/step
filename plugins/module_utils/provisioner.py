@@ -198,7 +198,16 @@ class StepCAContext:
             RuntimeError: If the CLI command fails.
         """
         command = self._extend_command(
-            ["step", "ca", "provisioner", "add", name, "--type", provisioner_type]
+            [
+                "step",
+                "ca",
+                "provisioner",
+                "add",
+                name,
+                "--type",
+                provisioner_type,
+                "--create",
+            ]
         )
 
         # Add specific X509 duration parameters if provided
