@@ -1,4 +1,4 @@
-"""Process utilities for executing commands as another user.
+"""Process utilities for executing commands.
 
 This module provides functions to run shell commands, optionally as another
 user (e.g., the Step CA system user), without requiring that user
@@ -100,6 +100,84 @@ def demote_user(username: str):
     )
 
 
+def _validate_user_switch(username: Optional[str]) -> None:
+    """
+    Validate that we can switch to the specified user.
+
+    Args:
+        username: The target system user to impersonate.
+
+    Raises:
+        RuntimeError: If the user switch cannot be performed.
+    """
+    if username and os.geteuid() != 0:
+        raise RuntimeError(
+            f"Unable to switch to user '{username}'. This operation "
+            "requires root privileges (use 'become: true' in your "
+            "playbook)."
+        )
+
+
+def _create_completed_process(
+    command: Union[List[str], str],
+    returncode: int,
+    stdout: Optional[str],
+    stderr: Optional[str],
+    text: bool,
+    strip_ansi: bool,
+) -> subprocess.CompletedProcess:
+    """
+    Create a CompletedProcess object with sanitized output.
+
+    Args:
+        command: The command that was executed.
+        returncode: The return code from the command.
+        stdout: The standard output from the command.
+        stderr: The standard error from the command.
+        text: Whether output was captured as text.
+        strip_ansi: Whether to strip ANSI sequences.
+
+    Returns:
+        A CompletedProcess object with sanitized outputs.
+    """
+    # Sanitize output if text is True
+    if text:
+        stdout = sanitize_output(stdout, strip_ansi)
+        stderr = sanitize_output(stderr, strip_ansi)
+
+    return subprocess.CompletedProcess(
+        args=command,
+        returncode=returncode,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+
+def _handle_command_failure(
+    result: subprocess.CompletedProcess, check: bool, text: bool
+) -> None:
+    """
+    Handle command failure based on check flag.
+
+    Args:
+        result: The CompletedProcess object.
+        check: Whether to raise an exception on failure.
+        text: Whether output was captured as text.
+
+    Raises:
+        RuntimeError: If check is True and the command failed.
+    """
+    if check and result.returncode != 0:
+        stdout = result.stdout.strip() if text and result.stdout else result.stdout
+        stderr = result.stderr.strip() if text and result.stderr else result.stderr
+
+        raise RuntimeError(
+            f"Command failed with return code {result.returncode}.\n"
+            f"STDOUT: {stdout}\n"
+            f"STDERR: {stderr}"
+        )
+
+
 def run_command(
     command: Union[List[str], str],
     debug: bool = False,
@@ -132,13 +210,8 @@ def run_command(
         RuntimeError: If the user switch fails or the command fails.
         CommandTimeout: If the command execution exceeds the timeout.
     """
-    # Validate root privileges before user switch
-    if username and os.geteuid() != 0:
-        raise RuntimeError(
-            f"Unable to switch to user '{username}'. This operation "
-            "requires root privileges (use 'become: true' in your "
-            "playbook)."
-        )
+    # Validate user switch
+    _validate_user_switch(username)
 
     # Prepare environment
     user_env = os.environ.copy()
@@ -163,7 +236,7 @@ def run_command(
             strip_ansi=strip_ansi,
         )
 
-    # Otherwise, use the simpler subprocess.run approach
+    # Otherwise, use the simpler subprocess approach
     try:
         # Use subprocess.Popen for more controlled execution
         with subprocess.Popen(
@@ -178,26 +251,13 @@ def run_command(
             # Wait for the process to complete
             stdout, stderr = process.communicate()
 
-            # Sanitize output if text is True
-            if text:
-                stdout = sanitize_output(stdout, strip_ansi)
-                stderr = sanitize_output(stderr, strip_ansi)
-
-            # Create CompletedProcess manually
-            result = subprocess.CompletedProcess(
-                args=command,
-                returncode=process.returncode,
-                stdout=stdout,
-                stderr=stderr,
+            # Create CompletedProcess with results
+            result = _create_completed_process(
+                command, process.returncode, stdout, stderr, text, strip_ansi
             )
 
             # Check return code if required
-            if check and process.returncode != 0:
-                raise RuntimeError(
-                    f"Command failed with return code {process.returncode}.\n"
-                    f"STDOUT: {stdout}\n"
-                    f"STDERR: {stderr}"
-                )
+            _handle_command_failure(result, check, text)
 
             return result
 
@@ -271,37 +331,23 @@ def _run_with_timeout(
             process.kill()
             stdout, stderr = process.communicate()
 
-            # Sanitize output if text is True
-            if text:
-                stdout = sanitize_output(stdout, strip_ansi)
-                stderr = sanitize_output(stderr, strip_ansi)
+            # Create timeout exception with sanitized output
+            sanitized_stdout = sanitize_output(stdout, strip_ansi) if text else stdout
+            sanitized_stderr = sanitize_output(stderr, strip_ansi) if text else stderr
 
             raise CommandTimeout(
                 f"Command timed out after {timeout} seconds",
-                stdout=stdout,
-                stderr=stderr,
+                stdout=sanitized_stdout,
+                stderr=sanitized_stderr,
             )
 
-        # Sanitize output if text is True
-        if text:
-            stdout = sanitize_output(stdout, strip_ansi)
-            stderr = sanitize_output(stderr, strip_ansi)
-
         # Create a CompletedProcess object with the results
-        result = subprocess.CompletedProcess(
-            args=command,
-            returncode=process.returncode,
-            stdout=stdout,
-            stderr=stderr,
+        result = _create_completed_process(
+            command, process.returncode, stdout, stderr, text, strip_ansi
         )
 
         # Handle non-zero return code if check is True
-        if check and process.returncode != 0:
-            raise RuntimeError(
-                f"Command failed with return code {process.returncode}.\n"
-                f"STDOUT: {stdout.strip() if text else stdout}\n"
-                f"STDERR: {stderr.strip() if text else stderr}"
-            )
+        _handle_command_failure(result, check, text)
 
         return result
 
