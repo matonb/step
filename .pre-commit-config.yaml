@@ -1,0 +1,16 @@
+repos:
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  rev: v0.12.1
+  hooks:
+  - id: ruff
+    name: ruff (config validation)
+    description: Validate ruff configuration
+    args: [ check, --show-settings, plugins/ ]
+    pass_filenames: false
+  - id: ruff
+    name: ruff (linter)
+    description: Run ruff linter
+    args: [ --fix ]
+  - id: ruff-format
+    name: ruff (formatter)
+    description: Run ruff formatter

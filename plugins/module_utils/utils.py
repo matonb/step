@@ -4,7 +4,7 @@ import json
 import secrets
 import string
 from pathlib import Path
-from typing import Tuple, Optional, Dict, Any
+from typing import Any, Optional
 
 from .process import run_command
 
@@ -56,7 +56,7 @@ def generate_secure_password(length: int = 32) -> str:
     return "".join(password)
 
 
-def read_json_file(json_file: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+def read_json_file(json_file: str) -> tuple[Optional[dict[str, Any]], Optional[str]]:
     """Read and parses a JSON configuration file.
 
     Args:
@@ -86,7 +86,7 @@ def read_json_file(json_file: str) -> Tuple[Optional[Dict[str, Any]], Optional[s
         return None, f"Invalid data in file: {value_error}"
 
 
-def save_json_file(json_path: str, data: Dict[str, Any]) -> Dict[str, Any]:
+def save_json_file(json_path: str, data: dict[str, Any]) -> dict[str, Any]:
     """Save JSON data to a file.
 
     Args:
@@ -99,6 +99,6 @@ def save_json_file(json_path: str, data: Dict[str, Any]) -> Dict[str, Any]:
     try:
         with open(json_path, "w", encoding=ENCODING) as file:
             json.dump(data, file, indent=4)
-    except IOError as error:
+    except OSError as error:
         return {"error": f"Failed to write JSON file: {str(error)}"}
     return {"success": True}

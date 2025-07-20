@@ -1,0 +1,154 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "matonb.step"
+description = "Ansible collection for managing Smallstep Certificate Authority"
+authors = [{name = "Brett Maton", email = "brett@example.com"}]
+license = {text = "MIT"}
+requires-python = ">=3.9"
+dynamic = ["version"]
+
+[project.optional-dependencies]
+dev = [
+    "pre-commit>=4.2.0",
+    "ruff>=0.12.4",
+]
+
+[tool.ruff]
+line-length = 122  # Match your existing flake8 setting
+target-version = "py39"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "C90",  # mccabe complexity
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "YTT",  # flake8-2020
+    "ANN",  # flake8-annotations
+    "S",    # flake8-bandit (security)
+    "BLE",  # flake8-blind-except
+    "FBT",  # flake8-boolean-trap
+    "A",    # flake8-builtins
+    "COM",  # flake8-commas
+    "DTZ",  # flake8-datetimez
+    "EM",   # flake8-errmsg
+    "ISC",  # flake8-implicit-str-concat
+    "ICN",  # flake8-import-conventions
+    "G",    # flake8-logging-format
+    "INP",  # flake8-no-pep420
+    "PIE",  # flake8-pie
+    "T20",  # flake8-print
+    "PYI",  # flake8-pyi
+    "PT",   # flake8-pytest-style
+    "Q",    # flake8-quotes
+    "RSE",  # flake8-raise
+    "RET",  # flake8-return
+    "SLF",  # flake8-self
+    "SLOT", # flake8-slots
+    "SIM",  # flake8-simplify
+    "TID",  # flake8-tidy-imports
+    "TCH",  # flake8-type-checking
+    "INT",  # flake8-gettext
+    "ARG",  # flake8-unused-arguments
+    "PTH",  # flake8-use-pathlib
+    "PGH",  # pygrep-hooks
+    "PL",   # pylint (PLC, PLE, PLR, PLW)
+    "TRY",  # tryceratops
+    "FLY",  # flynt
+    "PERF", # perflint
+    "FURB", # refurb
+    "LOG",  # flake8-logging
+    "RUF",  # ruff-specific rules
+    "D",    # pydocstyle
+]
+ignore = [
+    # Formatter conflicts
+    "COM812", # Trailing comma missing (conflicts with formatter)
+    "ISC001", # Implicitly concatenated string literals (conflicts with formatter)
+
+    # Ansible module specific allowances
+    "T201",   # print found (for debug output in modules)
+    "S101",   # Use of assert
+    "S603",   # subprocess call - needed for Ansible modules
+    "S607",   # subprocess call with shell - sometimes needed
+
+    # Type annotations (can be enabled gradually)
+    "ANN",    # Skip all type annotations for now
+
+    # Complexity allowances for existing code
+    "PLR0913", # Too many arguments to function call
+
+    # Code style preferences
+    "TID252",  # Allow relative imports in packages
+    "FBT002",  # Allow boolean default arguments (common in CLI tools)
+
+    # Exception handling style
+    "TRY003",  # Allow long exception messages
+    "TRY300",  # Allow statements not in else blocks
+    "BLE001",  # Allow broad exception catching
+
+    # Performance patterns common in this codebase
+    "PERF203", # Allow try-except in loops
+    "PERF401", # Allow manual list building over comprehensions
+
+    # File I/O patterns
+    "PTH123",  # Allow open() instead of Path.open()
+
+    # Return patterns
+    "RET504",  # Allow assignment before return
+
+    # Boolean argument patterns
+    "FBT001",  # Allow boolean positional arguments
+
+    # Docstring allowances
+    "D100",    # missing docstring in public module
+    "D104",    # missing docstring in public package
+    "D105",    # missing docstring in magic method
+
+    # Ansible module specific patterns
+    "INP001",  # implicit namespace package (Ansible collection structure)
+    "EM101",   # string literal in exception (common in error messages)
+    "EM102",   # f-string in exception (common in error messages)
+    "PLW1509", # preexec_fn with subprocess (needed for user switching)
+    "PTH",     # pathlib usage (os.path is still common in system tools)
+    "RUF010",  # explicit str() conversion (prefer explicit over implicit)
+    "SIM105",  # contextlib.suppress (prefer explicit try/except for clarity)
+    "ARG002",  # unused argument (interface compliance in abstract methods)
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pylint]
+max-args = 8
+max-branches = 15
+max-returns = 8
+max-statements = 60
+
+[tool.ruff.lint.per-file-ignores]
+"plugins/modules/*.py" = [
+    "D103",  # missing docstring in public function (main functions)
+    "PLR0912", # Too many branches
+    "PLR0915", # Too many statements
+]
+"plugins/module_utils/*.py" = [
+    "D101",  # missing docstring in public class (some utility classes)
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"  # Use Google-style docstrings
+
+[tool.ruff.lint.isort]
+known-first-party = ["ansible_collections.matonb.step"]

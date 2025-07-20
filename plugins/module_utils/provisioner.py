@@ -1,5 +1,4 @@
-"""
-Step CA provisioner dataclasses.
+"""Step CA provisioner dataclasses.
 
 This module defines dataclasses and helper classes for managing
 Step CA provisioners.
@@ -22,7 +21,7 @@ import stat
 import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Type
+from typing import Optional
 
 from .process import run_command
 from .utils import generate_secure_password
@@ -34,10 +33,10 @@ class Provisioner(ABC):
 
     name: str
     type: str
-    claims: Dict = field(default_factory=dict)
-    options: Dict = field(default_factory=dict)
+    claims: dict = field(default_factory=dict)
+    options: dict = field(default_factory=dict)
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         """Return a dictionary representation excluding empty optional fields.
 
         Returns:
@@ -55,8 +54,8 @@ class Provisioner(ABC):
 
     @abstractmethod
     def prepare_add_command(
-        self, base_command: List[str], context: "StepCAContext", **kwargs
-    ) -> Tuple[List[str], Optional[str], Optional[str]]:
+        self, base_command: list[str], context: "StepCAContext", **kwargs
+    ) -> tuple[list[str], Optional[str], Optional[str]]:
         """Prepare command for adding this type of provisioner.
 
         Args:
@@ -76,10 +75,10 @@ class Provisioner(ABC):
 class JWKProvisioner(Provisioner):
     """Provisioner that uses a JSON Web Key (JWK)."""
 
-    key: Dict[str, str] = field(default_factory=dict)
-    encryptedKey: str = ""
+    key: dict[str, str] = field(default_factory=dict)
+    encrypted_key: str = ""
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         """Return dictionary including JWK-specific fields.
 
         Returns:
@@ -87,12 +86,12 @@ class JWKProvisioner(Provisioner):
         """
         result = super().to_dict()
         result["key"] = self.key
-        result["encryptedKey"] = self.encryptedKey
+        result["encryptedKey"] = self.encrypted_key
         return result
 
     def prepare_add_command(
-        self, base_command: List[str], context: "StepCAContext", **kwargs
-    ) -> Tuple[List[str], Optional[str], Optional[str]]:
+        self, base_command: list[str], context: "StepCAContext", **kwargs
+    ) -> tuple[list[str], Optional[str], Optional[str]]:
         """Prepare command for adding a JWK provisioner.
 
         Args:
@@ -107,9 +106,7 @@ class JWKProvisioner(Provisioner):
             - Path to temporary password file
         """
         password = kwargs.get("password")
-        actual_password = (
-            password if password is not None else generate_secure_password()
-        )
+        actual_password = password if password is not None else generate_secure_password()
 
         # Create temporary password file
         fd, password_file = tempfile.mkstemp(text=True)
@@ -144,8 +141,8 @@ class ACMEProvisioner(Provisioner):
     """Provisioner that uses the ACME protocol."""
 
     def prepare_add_command(
-        self, base_command: List[str], context: "StepCAContext", **kwargs
-    ) -> Tuple[List[str], Optional[str], Optional[str]]:
+        self, base_command: list[str], context: "StepCAContext", **kwargs
+    ) -> tuple[list[str], Optional[str], Optional[str]]:
         """Prepare command for adding an ACME provisioner.
 
         Args:
@@ -182,7 +179,7 @@ class StepCAContext:
     x509_max: Optional[str] = None
     x509_default: Optional[str] = None
 
-    def _build_env(self) -> Optional[Dict[str, str]]:
+    def _build_env(self) -> Optional[dict[str, str]]:
         """Construct environment variables for CLI execution.
 
         Returns:
@@ -190,7 +187,7 @@ class StepCAContext:
         """
         return {"STEPPATH": self.ca_path} if self.ca_path else None
 
-    def _extend_command(self, command: List[str]) -> List[str]:
+    def _extend_command(self, command: list[str]) -> list[str]:
         """Append CA-related CLI flags to the base command.
 
         Args:
@@ -216,7 +213,7 @@ class StepCAContext:
 
         return command
 
-    def load_provisioners(self) -> List[Provisioner]:
+    def load_provisioners(self) -> list[Provisioner]:
         """Load the current list of provisioners via the Step CLI.
 
         Returns:
@@ -238,7 +235,7 @@ class StepCAContext:
         except json.JSONDecodeError as err:
             raise RuntimeError("Failed to parse JSON from step output.") from err
 
-        provisioners: List[Provisioner] = []
+        provisioners: list[Provisioner] = []
         for _, item in enumerate(raw_data):
             ptype = item.get("type")
             cls = _PROVISIONER_CLASSES.get(ptype)
@@ -253,7 +250,7 @@ class StepCAContext:
             }
             if cls is JWKProvisioner:
                 init_args["key"] = item.get("key", {})
-                init_args["encryptedKey"] = item.get("encryptedKey", "")
+                init_args["encrypted_key"] = item.get("encryptedKey", "")
 
             provisioner = cls(**init_args)
             provisioners.append(provisioner)
@@ -361,7 +358,7 @@ class StepCAContext:
 
 
 # Fixed the protected class access warning by elevating the classes to the module level
-_PROVISIONER_CLASSES: Dict[str, Type[Provisioner]] = {
+_PROVISIONER_CLASSES: dict[str, type[Provisioner]] = {
     "JWK": JWKProvisioner,
     "ACME": ACMEProvisioner,
 }

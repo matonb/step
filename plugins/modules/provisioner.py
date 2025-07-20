@@ -1,16 +1,12 @@
-"""
-Manage step-ca provisioners.
+"""Manage step-ca provisioners.
 
 This Ansible module allows creating, removing, and querying provisioners
 in a step-ca certificate authority. It supports different provisioner
 types including JWK and ACME.
 """
 
-from __future__ import absolute_import, division, print_function
-
-__metaclass__ = type
-
 from ansible.module_utils.basic import AnsibleModule
+
 from ansible_collections.matonb.step.plugins.module_utils.provisioner import (
     ACMEProvisioner,
     JWKProvisioner,
@@ -263,11 +259,7 @@ def main() -> None:
 
         changed = False
         restart_required = False
-        matched = [
-            p
-            for p in provisioners
-            if p.name == name and (not provisioner_type or p.type == provisioner_type)
-        ]
+        matched = [p for p in provisioners if p.name == name and (not provisioner_type or p.type == provisioner_type)]
 
         # Store the password used (if generated)
         used_password = None
@@ -300,9 +292,7 @@ def main() -> None:
             elif provisioner_type == "ACME":
                 matched = [ACMEProvisioner(name=name, type=provisioner_type)]
             else:
-                module.fail_json(
-                    msg=f"Unsupported provisioner type: {provisioner_type}"
-                )
+                module.fail_json(msg=f"Unsupported provisioner type: {provisioner_type}")
         elif state == "present" and not provisioner_type:
             module.fail_json(
                 msg="Parameter 'type' is required when state is 'present' and the provisioner doesn't exist."
