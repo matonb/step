@@ -23,7 +23,7 @@ jobs:
       - name: Install linting tools
         run: |
           python -m pip install --upgrade pip
-          pip install ansible ansible-lint flake8 flake8-docstrings yamllint
+          pip install ansible ansible-lint ruff yamllint
 
       - name: Lint Ansible roles
         run: |
@@ -32,10 +32,8 @@ jobs:
 
       - name: Lint Python code
         run: |
-          flake8 plugins/ --count --select=E9,F63,F7,F82 \
-              --show-source --statistics
-          flake8 plugins/ --count --exit-zero --max-complexity=10 \
-              --max-line-length=127 --statistics
+          ruff check plugins/
+          ruff format --check plugins/
 
       - name: Lint YAML files
         run: |

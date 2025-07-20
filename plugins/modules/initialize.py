@@ -3,14 +3,14 @@
 import os
 import pathlib
 import re
-from typing import Dict, List, Optional, Any
+from typing import Any, Optional
 
 from ansible.module_utils.basic import AnsibleModule
-from ansible_collections.matonb.step.plugins.module_utils.process import (
-    run_command,
-    CommandTimeout,
-)
 
+from ansible_collections.matonb.step.plugins.module_utils.process import (
+    CommandTimeoutError,
+    run_command,
+)
 
 DOCUMENTATION = r"""
 ---
@@ -48,7 +48,7 @@ changed:
 """
 
 
-def get_argument_spec() -> Dict[str, Dict[str, Any]]:
+def get_argument_spec() -> dict[str, dict[str, Any]]:
     """Return the argument specification for the initialize module.
 
     Returns:
@@ -110,10 +110,7 @@ def get_argument_spec() -> Dict[str, Dict[str, Any]]:
         },
         "helm": {
             "type": "bool",
-            "help": (
-                "NOT IMPLEMENTED - Generates a Helm values YAML to be "
-                "used with step-certificates chart"
-            ),
+            "help": ("NOT IMPLEMENTED - Generates a Helm values YAML to be used with step-certificates chart"),
         },
         "issuer": {"type": "str"},
         "issuer_fingerprint": {"type": "str"},
@@ -124,10 +121,7 @@ def get_argument_spec() -> Dict[str, Dict[str, Any]]:
         },
         "key_password_file": {
             "type": "path",
-            "help": (
-                "The path to the file containing the password to decrypt "
-                "the existing root certificate key"
-            ),
+            "help": ("The path to the file containing the password to decrypt the existing root certificate key"),
             "no_log": True,
         },
         "kms": {"type": "str", "choices": ["azurekms"]},
@@ -136,10 +130,7 @@ def get_argument_spec() -> Dict[str, Dict[str, Any]]:
         "kms_ssh_host": {"type": "str"},
         "kms_ssh_user": {
             "type": "str",
-            "help": (
-                "The kms URI used to generate the key used to sign SSH "
-                "user certificates"
-            ),
+            "help": ("The kms URI used to generate the key used to sign SSH user certificates"),
         },
         "name": {"type": "str", "required": True, "help": "The name of the new PKI"},
         "no_db": {"type": "bool"},
@@ -151,10 +142,7 @@ def get_argument_spec() -> Dict[str, Dict[str, Any]]:
         },
         "path": {
             "type": "path",
-            "help": (
-                "Specifies the location where step stores its "
-                "configuration, state, and Certificate Authority data"
-            ),
+            "help": ("Specifies the location where step stores its configuration, state, and Certificate Authority data"),
             "required": True,
         },
         "pki": {
@@ -180,7 +168,7 @@ def get_argument_spec() -> Dict[str, Dict[str, Any]]:
     }
 
 
-def build_initialize_command(params: Dict[str, Any]) -> List[str]:
+def build_initialize_command(params: dict[str, Any]) -> list[str]:
     """Build the step CA initialize command from module parameters.
 
     Args:
@@ -223,7 +211,7 @@ def build_initialize_command(params: Dict[str, Any]) -> List[str]:
         if params.get(key):
             value = str(params[key]).strip()
             if value:
-                cmd.extend([f'--{key.replace("_", "-")}', value])
+                cmd.extend([f"--{key.replace('_', '-')}", value])
 
     # Add admin subject if remote management is enabled
     if params.get("remote_management") and params.get("admin_subject"):
@@ -313,14 +301,12 @@ def run_step_ca_initialize(module: AnsibleModule) -> None:
 
         return
 
-    except CommandTimeout as exc:
+    except CommandTimeoutError as exc:
         # Handle timeout with potential prompt detection
         prompt_pattern = r"(Please enter|Would you like to|\[y/n\])"
         if re.search(prompt_pattern, exc.stdout or ""):
             module.fail_json(msg="Detected user input prompt")
-        module.fail_json(
-            msg=f"Step CA initialization timed out after {timeout} seconds."
-        )
+        module.fail_json(msg=f"Step CA initialization timed out after {timeout} seconds.")
 
     except FileNotFoundError as exc:
         module.fail_json(msg=f"Command not found: {str(exc)}")
@@ -342,9 +328,7 @@ def main() -> None:
         module.fail_json(msg="Helm support is not yet implemented.")
 
     # Check for existing CA files
-    error_msg = check_existing_ca_files(
-        step_path, force=module.params.get("force", False)
-    )
+    error_msg = check_existing_ca_files(step_path, force=module.params.get("force", False))
     if error_msg:
         module.fail_json(msg=error_msg)
 
@@ -356,9 +340,7 @@ def main() -> None:
     try:
         run_step_ca_initialize(module)
         # Exit with success message
-        module.exit_json(
-            changed=True, msg="Step CA initialization completed successfully."
-        )
+        module.exit_json(changed=True, msg="Step CA initialization completed successfully.")
     except Exception as exc:
         module.fail_json(msg=f"Unexpected error: {str(exc)}")
 

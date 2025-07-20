@@ -13,16 +13,14 @@ import os
 import pwd
 import re
 import subprocess
-from typing import Dict, List, Optional, Union
+from typing import Optional, Union
 
 
-class CommandTimeout(TimeoutError):
+class CommandTimeoutError(TimeoutError):
     """Exception raised when a command execution exceeds the timeout."""
 
-    def __init__(
-        self, message: str, stdout: Optional[str] = None, stderr: Optional[str] = None
-    ):
-        """Initialize CommandTimeout with message and captured output.
+    def __init__(self, message: str, stdout: Optional[str] = None, stderr: Optional[str] = None):
+        """Initialize CommandTimeoutError with message and captured output.
 
         Args:
             message: The error message
@@ -42,8 +40,7 @@ def strip_ansi_sequences(text):
 
 
 def sanitize_output(text: Optional[str], strip_ansi: bool = True) -> Optional[str]:
-    """
-    Sanitize command output.
+    """Sanitize command output.
 
     Sanitize command output by optionally stripping ANSI sequences
     and performing additional safety checks.
@@ -69,8 +66,7 @@ def sanitize_output(text: Optional[str], strip_ansi: bool = True) -> Optional[st
 
 
 def demote_user(username: str):
-    """
-    Demote the current process to the specified user's privileges.
+    """Demote the current process to the specified user's privileges.
 
     Args:
         username: The target system user to impersonate.
@@ -101,8 +97,7 @@ def demote_user(username: str):
 
 
 def _validate_user_switch(username: Optional[str]) -> None:
-    """
-    Validate that we can switch to the specified user.
+    """Validate that we can switch to the specified user.
 
     Args:
         username: The target system user to impersonate.
@@ -119,15 +114,14 @@ def _validate_user_switch(username: Optional[str]) -> None:
 
 
 def _create_completed_process(
-    command: Union[List[str], str],
+    command: Union[list[str], str],
     returncode: int,
     stdout: Optional[str],
     stderr: Optional[str],
     text: bool,
     strip_ansi: bool,
 ) -> subprocess.CompletedProcess:
-    """
-    Create a CompletedProcess object with sanitized output.
+    """Create a CompletedProcess object with sanitized output.
 
     Args:
         command: The command that was executed.
@@ -153,11 +147,8 @@ def _create_completed_process(
     )
 
 
-def _handle_command_failure(
-    result: subprocess.CompletedProcess, check: bool, text: bool
-) -> None:
-    """
-    Handle command failure based on check flag.
+def _handle_command_failure(result: subprocess.CompletedProcess, check: bool, text: bool) -> None:
+    """Handle command failure based on check flag.
 
     Args:
         result: The CompletedProcess object.
@@ -171,17 +162,13 @@ def _handle_command_failure(
         stdout = result.stdout.strip() if text and result.stdout else result.stdout
         stderr = result.stderr.strip() if text and result.stderr else result.stderr
 
-        raise RuntimeError(
-            f"Command failed with return code {result.returncode}.\n"
-            f"STDOUT: {stdout}\n"
-            f"STDERR: {stderr}"
-        )
+        raise RuntimeError(f"Command failed with return code {result.returncode}.\nSTDOUT: {stdout}\nSTDERR: {stderr}")
 
 
 def run_command(
-    command: Union[List[str], str],
+    command: Union[list[str], str],
     debug: bool = False,
-    env_vars: Optional[Dict[str, str]] = None,
+    env_vars: Optional[dict[str, str]] = None,
     shell: bool = False,
     username: Optional[str] = None,
     timeout: Optional[float] = None,
@@ -189,8 +176,7 @@ def run_command(
     text: bool = True,
     strip_ansi: bool = True,
 ) -> subprocess.CompletedProcess:
-    """
-    Run a command optionally as another system user with timeout support and output sanitization.
+    """Run a command optionally as another system user with timeout support and output sanitization.
 
     Args:
         command: The command to execute as a list of args or a string.
@@ -208,7 +194,7 @@ def run_command(
 
     Raises:
         RuntimeError: If the user switch fails or the command fails.
-        CommandTimeout: If the command execution exceeds the timeout.
+        CommandTimeoutError: If the command execution exceeds the timeout.
     """
     # Validate user switch
     _validate_user_switch(username)
@@ -252,9 +238,7 @@ def run_command(
             stdout, stderr = process.communicate()
 
             # Create CompletedProcess with results
-            result = _create_completed_process(
-                command, process.returncode, stdout, stderr, text, strip_ansi
-            )
+            result = _create_completed_process(command, process.returncode, stdout, stderr, text, strip_ansi)
 
             # Check return code if required
             _handle_command_failure(result, check, text)
@@ -268,9 +252,7 @@ def run_command(
             stdout = sanitize_output(exc.stdout, strip_ansi) if text else exc.stdout
 
             raise RuntimeError(
-                f"Command failed with return code {exc.returncode}.\n"
-                f"STDOUT: {stdout}\n"
-                f"STDERR: {stderr}"
+                f"Command failed with return code {exc.returncode}.\nSTDOUT: {stdout}\nSTDERR: {stderr}"
             ) from exc
 
         # Sanitize stdout and stderr for the exception case
@@ -282,17 +264,16 @@ def run_command(
 
 
 def _run_with_timeout(
-    command: Union[List[str], str],
+    command: Union[list[str], str],
     timeout: float,
-    env: Dict[str, str],
+    env: dict[str, str],
     username: Optional[str] = None,
     shell: bool = False,
     text: bool = True,
     check: bool = True,
     strip_ansi: bool = True,
 ) -> subprocess.CompletedProcess:
-    """
-    Execute a command with advanced timeout handling.
+    """Execute a command with advanced timeout handling.
 
     Args:
         command: The command to execute.
@@ -308,7 +289,7 @@ def _run_with_timeout(
         subprocess.CompletedProcess: Object containing execution results.
 
     Raises:
-        CommandTimeout: If the command execution exceeds the timeout.
+        CommandTimeoutError: If the command execution exceeds the timeout.
         subprocess.CalledProcessError: If the command returns non-zero and check=True.
     """
     # Start the process
@@ -326,7 +307,7 @@ def _run_with_timeout(
         # Wait for the process to complete or timeout
         try:
             stdout, stderr = process.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as timeout_err:
             # Kill the process and get any remaining output
             process.kill()
             stdout, stderr = process.communicate()
@@ -335,16 +316,14 @@ def _run_with_timeout(
             sanitized_stdout = sanitize_output(stdout, strip_ansi) if text else stdout
             sanitized_stderr = sanitize_output(stderr, strip_ansi) if text else stderr
 
-            raise CommandTimeout(
+            raise CommandTimeoutError(
                 f"Command timed out after {timeout} seconds",
                 stdout=sanitized_stdout,
                 stderr=sanitized_stderr,
-            )
+            ) from timeout_err
 
         # Create a CompletedProcess object with the results
-        result = _create_completed_process(
-            command, process.returncode, stdout, stderr, text, strip_ansi
-        )
+        result = _create_completed_process(command, process.returncode, stdout, stderr, text, strip_ansi)
 
         # Handle non-zero return code if check is True
         _handle_command_failure(result, check, text)
