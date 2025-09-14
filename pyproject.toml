@@ -78,10 +78,10 @@ ignore = [
     "ISC001", # Implicitly concatenated string literals (conflicts with formatter)
 
     # Ansible module specific allowances
-    "T201",   # print found (for debug output in modules)
     "S101",   # Use of assert
     "S603",   # subprocess call - needed for Ansible modules
     "S607",   # subprocess call with shell - sometimes needed
+    "T201",   # print found (for debug output in modules)
 
     # Type annotations (can be enabled gradually)
     "ANN",    # Skip all type annotations for now
@@ -90,20 +90,17 @@ ignore = [
     "PLR0913", # Too many arguments to function call
 
     # Code style preferences
-    "TID252",  # Allow relative imports in packages
     "FBT002",  # Allow boolean default arguments (common in CLI tools)
+    "TID252",  # Allow relative imports in packages
 
     # Exception handling style
+    "BLE001",  # Allow broad exception catching
     "TRY003",  # Allow long exception messages
     "TRY300",  # Allow statements not in else blocks
-    "BLE001",  # Allow broad exception catching
 
     # Performance patterns common in this codebase
     "PERF203", # Allow try-except in loops
     "PERF401", # Allow manual list building over comprehensions
-
-    # File I/O patterns
-    "PTH123",  # Allow open() instead of Path.open()
 
     # Return patterns
     "RET504",  # Allow assignment before return
@@ -117,14 +114,14 @@ ignore = [
     "D105",    # missing docstring in magic method
 
     # Ansible module specific patterns
-    "INP001",  # implicit namespace package (Ansible collection structure)
+    "ARG002",  # unused argument (interface compliance in abstract methods)
     "EM101",   # string literal in exception (common in error messages)
     "EM102",   # f-string in exception (common in error messages)
+    "INP001",  # implicit namespace package (Ansible collection structure)
     "PLW1509", # preexec_fn with subprocess (needed for user switching)
     "PTH",     # pathlib usage (os.path is still common in system tools)
     "RUF010",  # explicit str() conversion (prefer explicit over implicit)
     "SIM105",  # contextlib.suppress (prefer explicit try/except for clarity)
-    "ARG002",  # unused argument (interface compliance in abstract methods)
 ]
 
 [tool.ruff.format]

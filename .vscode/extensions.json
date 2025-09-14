@@ -1,0 +1,13 @@
+{
+    "recommendations": [
+        "charliermarsh.ruff", // Ruff linting & formatting
+        "ms-python.python", // Python support
+        "redhat.vscode-yaml", // YAML support
+        "ms-azuretools.vscode-docker" // Optional: Docker support if needed
+    ],
+    "unwantedRecommendations": [
+        "ms-python.black-formatter", // Avoid Black conflicts
+        "ms-python.autopep8", // Avoid autopep8 conflicts
+        "ms-python.yapf" // Avoid YAPF conflicts
+    ]
+}
