@@ -1,20 +1,23 @@
----
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.12.1
     hooks:
+      - id: ruff-format
+        name: ruff (formatter)
+        description: Run ruff formatter (always)
+        pass_filenames: false
+        always_run: true
+
+      - id: ruff
+        name: ruff (linter autofix)
+        description: Run ruff linter with autofix (excluding formatting)
+        args: [--fix]
+
       - id: ruff
         name: ruff (config validation)
         description: Validate ruff configuration
-        args: [check, --show-settings, plugins/]
+        args: [check, --show-settings, --, plugins/]
         pass_filenames: false
-      - id: ruff
-        name: ruff (linter)
-        description: Run ruff linter
-        args: [--fix]
-      - id: ruff-format
-        name: ruff (formatter)
-        description: Run ruff formatter
 
   - repo: https://github.com/adrienverge/yamllint.git
     rev: v1.35.1
@@ -23,7 +26,8 @@ repos:
         name: yamllint
         description: Lint YAML files
         args: [--format, parsable]
-
+        additional_dependencies: [pyyaml]
+#
 # Disabled for now - requires more complex configuration for collection metadata
 #  - repo: https://github.com/ansible/ansible-lint
 #    rev: v24.12.2
