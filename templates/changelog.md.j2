@@ -1,0 +1,34 @@
+# Changelog
+
+{% for version in versions %}
+## {{ version.tag }} ({{ version.date }})
+
+{% if version.breaking_changes %}
+### ⚠️ Breaking Changes
+{% for change in version.breaking_changes %}
+- {{ change }}
+{% endfor %}
+{% endif %}
+
+{% if version.features %}
+### ✨ Features
+{% for feature in version.features %}
+- {{ feature }}
+{% endfor %}
+{% endif %}
+
+{% if version.fixes %}
+### 🐛 Fixes
+{% for fix in version.fixes %}
+- {{ fix }}
+{% endfor %}
+{% endif %}
+
+{% if version.other %}
+### 📦 Other Changes
+{% for item in version.other %}
+- {{ item }}
+{% endfor %}
+{% endif %}
+
+{% endfor %}

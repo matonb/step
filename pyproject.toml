@@ -1,14 +1,14 @@
 [build-system]
-requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
+requires = ["setuptools", "wheel"]
 
 [project]
-name = "matonb.step"
+authors = [{ name = "Brett Maton", email = "brett@example.com" }]
 description = "Ansible collection for managing Smallstep Certificate Authority"
-authors = [{name = "Brett Maton", email = "brett@example.com"}]
-license = {text = "MIT"}
-requires-python = ">=3.9"
 dynamic = ["version"]
+license = { text = "MIT" }
+name = "matonb.step"
+requires-python = ">=3.9"
 
 [project.optional-dependencies]
 dev = [
@@ -20,10 +20,61 @@ dev = [
 ]
 
 [tool.ruff]
-line-length = 122  # Match your existing flake8 setting
+line-length = 122       # Match your existing flake8 setting
 target-version = "py39"
 
 [tool.ruff.lint]
+ignore = [
+    # Formatter conflicts
+    "COM812", # Trailing comma missing (conflicts with formatter)
+    "ISC001", # Implicitly concatenated string literals (conflicts with formatter)
+
+    # Ansible module specific allowances
+    "S101", # Use of assert
+    "S603", # subprocess call - needed for Ansible modules
+    "S607", # subprocess call with shell - sometimes needed
+    "T201", # print found (for debug output in modules)
+
+    # Type annotations (can be enabled gradually)
+    "ANN", # Skip all type annotations for now
+
+    # Complexity allowances for existing code
+    "PLR0913", # Too many arguments to function call
+
+    # Code style preferences
+    "FBT002", # Allow boolean default arguments (common in CLI tools)
+    "TID252", # Allow relative imports in packages
+
+    # Exception handling style
+    "BLE001", # Allow broad exception catching
+    "TRY003", # Allow long exception messages
+    "TRY300", # Allow statements not in else blocks
+
+    # Performance patterns common in this codebase
+    "PERF203", # Allow try-except in loops
+    "PERF401", # Allow manual list building over comprehensions
+
+    # Return patterns
+    "RET504", # Allow assignment before return
+
+    # Boolean argument patterns
+    "FBT001", # Allow boolean positional arguments
+
+    # Docstring allowances
+    "D100", # missing docstring in public module
+    "D104", # missing docstring in public package
+    "D105", # missing docstring in magic method
+
+    # Ansible module specific patterns
+    "ARG002",  # unused argument (interface compliance in abstract methods)
+    "EM101",   # string literal in exception (common in error messages)
+    "EM102",   # f-string in exception (common in error messages)
+    "INP001",  # implicit namespace package (Ansible collection structure)
+    "PLW1509", # preexec_fn with subprocess (needed for user switching)
+    "PTH",     # pathlib usage (os.path is still common in system tools)
+    "RUF010",  # explicit str() conversion (prefer explicit over implicit)
+    "SIM105",  # contextlib.suppress (prefer explicit try/except for clarity)
+]
 select = [
     "E",    # pycodestyle errors
     "W",    # pycodestyle warnings
@@ -72,61 +123,10 @@ select = [
     "RUF",  # ruff-specific rules
     "D",    # pydocstyle
 ]
-ignore = [
-    # Formatter conflicts
-    "COM812", # Trailing comma missing (conflicts with formatter)
-    "ISC001", # Implicitly concatenated string literals (conflicts with formatter)
-
-    # Ansible module specific allowances
-    "S101",   # Use of assert
-    "S603",   # subprocess call - needed for Ansible modules
-    "S607",   # subprocess call with shell - sometimes needed
-    "T201",   # print found (for debug output in modules)
-
-    # Type annotations (can be enabled gradually)
-    "ANN",    # Skip all type annotations for now
-
-    # Complexity allowances for existing code
-    "PLR0913", # Too many arguments to function call
-
-    # Code style preferences
-    "FBT002",  # Allow boolean default arguments (common in CLI tools)
-    "TID252",  # Allow relative imports in packages
-
-    # Exception handling style
-    "BLE001",  # Allow broad exception catching
-    "TRY003",  # Allow long exception messages
-    "TRY300",  # Allow statements not in else blocks
-
-    # Performance patterns common in this codebase
-    "PERF203", # Allow try-except in loops
-    "PERF401", # Allow manual list building over comprehensions
-
-    # Return patterns
-    "RET504",  # Allow assignment before return
-
-    # Boolean argument patterns
-    "FBT001",  # Allow boolean positional arguments
-
-    # Docstring allowances
-    "D100",    # missing docstring in public module
-    "D104",    # missing docstring in public package
-    "D105",    # missing docstring in magic method
-
-    # Ansible module specific patterns
-    "ARG002",  # unused argument (interface compliance in abstract methods)
-    "EM101",   # string literal in exception (common in error messages)
-    "EM102",   # f-string in exception (common in error messages)
-    "INP001",  # implicit namespace package (Ansible collection structure)
-    "PLW1509", # preexec_fn with subprocess (needed for user switching)
-    "PTH",     # pathlib usage (os.path is still common in system tools)
-    "RUF010",  # explicit str() conversion (prefer explicit over implicit)
-    "SIM105",  # contextlib.suppress (prefer explicit try/except for clarity)
-]
 
 [tool.ruff.format]
-quote-style = "double"
 indent-style = "space"
+quote-style = "double"
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
@@ -138,17 +138,42 @@ max-returns = 8
 max-statements = 60
 
 [tool.ruff.lint.per-file-ignores]
+"plugins/module_utils/*.py" = [
+    "D101", # missing docstring in public class (some utility classes)
+]
 "plugins/modules/*.py" = [
-    "D103",  # missing docstring in public function (main functions)
+    "D103",    # missing docstring in public function (main functions)
     "PLR0912", # Too many branches
     "PLR0915", # Too many statements
 ]
-"plugins/module_utils/*.py" = [
-    "D101",  # missing docstring in public class (some utility classes)
-]
 
 [tool.ruff.lint.pydocstyle]
-convention = "google"  # Use Google-style docstrings
+convention = "google" # Use Google-style docstrings
 
 [tool.ruff.lint.isort]
 known-first-party = ["ansible_collections.matonb.step"]
+
+[tool.semantic_release]
+build_command = false
+commit_version_number = true
+tag_format = "v{version}"
+upload_to_github_release = true
+version_variable = "galaxy.yml:version"
+
+[tool.semantic_release.branches.main]
+match = "main"
+prerelease = false
+
+[tool.semantic_release.branches.rc]
+match = "rc"
+prerelease = true
+prerelease_token = "rc"
+
+[tool.semantic_release.branches.beta]
+match = "beta"
+prerelease = true
+prerelease_token = "beta"
+
+[tool.semantic_release.changelog]
+changelog_file = "CHANGELOG.md"
+template_dir = "templates"
