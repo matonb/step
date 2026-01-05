@@ -154,11 +154,15 @@ convention = "google" # Use Google-style docstrings
 known-first-party = ["ansible_collections.matonb.step"]
 
 [tool.semantic_release]
-build_command = false
+build_command = ""
 commit_version_number = true
 tag_format = "v{version}"
 upload_to_github_release = true
 version_variable = "galaxy.yml:version"
+
+[tool.semantic_release.changelog.default_templates]
+changelog_file = "CHANGELOG.md"
+template_dir = "templates"
 
 [tool.semantic_release.branches.main]
 match = "main"
@@ -173,7 +177,3 @@ prerelease_token = "rc"
 match = "beta"
 prerelease = true
 prerelease_token = "beta"
-
-[tool.semantic_release.changelog]
-changelog_file = "CHANGELOG.md"
-template_dir = "templates"
