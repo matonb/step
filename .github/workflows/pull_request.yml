@@ -1,0 +1,48 @@
+name: Validate Commits
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate-commits:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout the PR branch
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Full history needed for commitlint
+
+      # Set up Node.js (commitlint is a Node tool)
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "20"
+
+      # Install commitlint and conventional config
+      - name: Install commitlint
+        run: |
+          npm install --save-dev @commitlint/{cli,config-conventional}
+
+      # Create commitlint config
+      - name: Configure commitlint
+        run: |
+          cat <<EOF > commitlint.config.js
+          module.exports = {
+            extends: ['@commitlint/config-conventional']
+          };
+          EOF
+
+      # Validate all commits in the PR
+      - name: Check commit messages
+        run: |
+          # List all commits in the PR branch compared to main
+          git fetch origin main
+          PR_COMMITS=$(git rev-list origin/main..HEAD)
+          # Run commitlint on each commit
+          for commit in $PR_COMMITS; do
+            git show --pretty=format:%s --no-patch $commit | npx commitlint
+          done
