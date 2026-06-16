@@ -1,9 +1,11 @@
 ---
 - name: Ensure step group
+  become: true
   ansible.builtin.user:
     name: step
     system: true
 - name: Ensure step user
+  become: true
   ansible.builtin.user:
     name: step
     group: step
