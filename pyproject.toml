@@ -155,10 +155,8 @@ known-first-party = ["ansible_collections.matonb.step"]
 
 [tool.semantic_release]
 build_command = ""
-commit_version_number = true
 tag_format = "v{version}"
-upload_to_github_release = true
-version_variable = "galaxy.yml:version"
+version_variables = ["galaxy.yml:version"]
 
 [tool.semantic_release.changelog.default_templates]
 changelog_file = "CHANGELOG.md"
