@@ -167,6 +167,7 @@ def _handle_command_failure(result: subprocess.CompletedProcess, check: bool, te
 
 def run_command(
     command: Union[list[str], str],
+    *,
     debug: bool = False,
     env_vars: Optional[dict[str, str]] = None,
     shell: bool = False,

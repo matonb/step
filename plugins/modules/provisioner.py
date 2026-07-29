@@ -33,6 +33,9 @@ module: provisioner
 short_description: Interact with step-ca provisioners
 description:
   - Loads and filters provisioners from `step ca provisioner list`.
+  - Supports check mode. Under C(--check) the provisioner list is read and the
+    resulting C(changed)/C(restart_required) values are predicted, but no
+    provisioner is added or removed and no password is generated.
 options:
   ca_path:
     description:
@@ -266,22 +269,26 @@ def main() -> None:
 
         if state == "absent" and matched:
             # Remove the provisioner if it exists and state is "absent"
-            context.remove_provisioner(name)
+            if not module.check_mode:
+                context.remove_provisioner(name)
             changed = True
             restart_required = True
             # After restart, this provisioner will be gone
             matched = []
         elif state == "present" and not matched and provisioner_type:
             # Create the provisioner if it doesn't exist, state is "present",
-            # and provisioner_type is specified
-            used_password = context.add_provisioner(
-                name=name,
-                password=password,
-                provisioner_type=provisioner_type,
-                x509_min=x509_min,
-                x509_max=x509_max,
-                x509_default=x509_default,
-            )
+            # and provisioner_type is specified.
+            # In check mode no key is minted, so no password is generated and
+            # none is reported back.
+            if not module.check_mode:
+                used_password = context.add_provisioner(
+                    name=name,
+                    password=password,
+                    provisioner_type=provisioner_type,
+                    x509_min=x509_min,
+                    x509_max=x509_max,
+                    x509_default=x509_default,
+                )
             changed = True
             restart_required = True
 
@@ -293,7 +300,9 @@ def main() -> None:
                 matched = [ACMEProvisioner(name=name, type=provisioner_type)]
             else:
                 module.fail_json(msg=f"Unsupported provisioner type: {provisioner_type}")
-        elif state == "present" and not provisioner_type:
+        elif state == "present" and not matched and not provisioner_type:
+            # Only a provisioner that has to be created needs a type; an
+            # existing one is already at the desired state and is a no-op.
             module.fail_json(
                 msg="Parameter 'type' is required when state is 'present' and the provisioner doesn't exist."
             )
