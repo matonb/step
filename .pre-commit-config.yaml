@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.12.1
+    rev: v0.16.0
     hooks:
       - id: ruff-format
         name: ruff (formatter)
@@ -20,7 +20,7 @@ repos:
         pass_filenames: false
 
   - repo: https://github.com/adrienverge/yamllint.git
-    rev: v1.35.1
+    rev: v1.38.0
     hooks:
       - id: yamllint
         name: yamllint
