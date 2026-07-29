@@ -76,11 +76,7 @@ except CommandTimeout as exc:
 
 ```python
 # Requires root privileges
-result = run_command(
-    ["whoami"], 
-    username="otheruser", 
-    env_vars={"CUSTOM_VAR": "value"}
-)
+result = run_command(["whoami"], username="otheruser", env_vars={"CUSTOM_VAR": "value"})
 ```
 
 ### Shell Command with Non-zero Exit Handling
