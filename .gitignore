@@ -82,3 +82,6 @@ local_config.yml
 .claude/
 CLAUDE.md
 
+
+# pytest collection shim (see tests/unit/conftest.py)
+.pytest-collection-root/
