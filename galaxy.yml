@@ -1,5 +1,5 @@
 ---
-# SPDX-License-Identifier: MIT-0
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 ### REQUIRED
 
@@ -32,7 +32,7 @@ description: A collection to install and manage SmallStep CA
 # Either a single license or a list of SPDX-compatible licenses
 # This key is mutually exclusive with 'license_file'
 license:
-  - GPL-2.0-or-later
+  - GPL-3.0-or-later
 
 # Path to the license file. Mutually exclusive with 'license'
 license_file: null
