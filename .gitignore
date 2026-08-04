@@ -78,3 +78,7 @@ local_config.yml
 # virtualenv for tests/locally installed development dependencies
 /venv/
 
+# Local AI assistant config
+.claude/
+CLAUDE.md
+

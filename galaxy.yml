@@ -22,7 +22,7 @@ readme: README.md
 # A list of the collection's content authors. Can be just the name or in the
 # format 'Full Name <email> (url) @nicks:irc/im.site#channel'
 authors:
-  - Brett Maton <example@domain.com>
+  - Brett Maton <matonb@users.noreply.github.com>
 
 ### OPTIONAL but strongly recommended
 
@@ -38,17 +38,25 @@ license:
 license_file: null
 
 # Tags associated with the collection for indexing/search
-tags: []
+tags:
+  - step
+  - step_ca
+  - smallstep
+  - ca
+  - pki
+  - certificates
+  - tls
+  - security
 
 # Collections that this one depends on, in the format
 # 'namespace.name': 'version'
 dependencies: {}
 
 # Metadata URLs (optional but helpful)
-repository: http://example.com/repository
-documentation: http://docs.example.com
-homepage: http://example.com
-issues: http://example.com/issue/tracker
+repository: https://github.com/matonb/step
+documentation: https://github.com/matonb/step/blob/main/README.md
+homepage: https://github.com/matonb/step
+issues: https://github.com/matonb/step/issues
 
 # List of file patterns to exclude from collection build artifact
 build_ignore: []
