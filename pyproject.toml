@@ -148,6 +148,16 @@ max-statements = 60
     "PLR0912", # Too many branches
     "PLR0915", # Too many statements
 ]
+"tests/**/*.py" = [
+    "D101",    # missing docstring in public class (test doubles)
+    "D102",    # missing docstring in public method (test names are the docs)
+    "PLR2004", # magic value in comparison
+    #          Comparing against a literal expected value is the point of a
+    #          test; naming each one would obscure what is being asserted.
+    "S105",    # hardcoded password (test fixtures use obvious fake values)
+    "S106",    # hardcoded password argument
+    "SLF001",  # private member access (tests assert on the flag tables)
+]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 # Mirrors the "unwanted functions" that ansible-test's pylint plugin rejects

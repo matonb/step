@@ -1,0 +1,210 @@
+---
+# Drives the provisioner module against a CA initialised with
+# --remote-management, where provisioners live in the CA database and are
+# changed through the authenticated Admin API.
+- name: Admin mode (remote management)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ca_dir: "{{ lookup('env', 'STEP_TEST_ADMIN_DIR') }}"
+    ca_url: "{{ lookup('env', 'STEP_TEST_ADMIN_URL') }}"
+    connection_options:
+      admin_password_file: "{{ ca_dir }}/pass"
+      admin_provisioner: admin
+      admin_subject: step
+      ca_config: "{{ ca_dir }}/ca.json"
+      ca_url: "{{ ca_url }}"
+      root: "{{ ca_dir }}/root_ca.crt"
+  tasks:
+    - name: Checksum ca.json before anything runs
+      ansible.builtin.stat:
+        checksum_algorithm: sha256
+        path: "{{ ca_dir }}/ca.json"
+      register: ca_json_before
+
+    - name: Missing admin credentials must fail immediately, not hang
+      matonb.step.provisioner:
+        ca_config: "{{ ca_dir }}/ca.json"
+        ca_url: "{{ ca_url }}"
+        name: neverbuilt
+        root: "{{ ca_dir }}/root_ca.crt"
+        type: ACME
+      register: no_credentials
+      ignore_errors: true
+
+    - name: Assert the anti-hang guard fired
+      ansible.builtin.assert:
+        that:
+          - no_credentials is failed
+          - "'admin_subject' in no_credentials.msg"
+        fail_msg: >-
+          Expected incomplete admin credentials to be rejected before step ran
+
+    - name: Add an ACME provisioner (check mode)
+      matonb.step.provisioner:
+        name: acme
+        type: ACME
+      args: "{{ connection_options }}"
+      check_mode: true
+      register: acme_check
+
+    - name: Add an ACME provisioner
+      matonb.step.provisioner:
+        name: acme
+        type: ACME
+      args: "{{ connection_options }}"
+      register: acme_add
+
+    - name: Add it again
+      matonb.step.provisioner:
+        name: acme
+        type: ACME
+      args: "{{ connection_options }}"
+      register: acme_again
+
+    - name: Assert the mode, the change, and that no restart is demanded
+      ansible.builtin.assert:
+        that:
+          - acme_check is changed
+          - acme_add.management_mode == 'admin'
+          - acme_add is changed
+          - not acme_add.restart_required
+          - acme_again is not changed
+        fail_msg: "Admin mode add/idempotence/restart_required incorrect"
+
+    - name: Add a JWK provisioner with claims
+      matonb.step.provisioner:
+        name: cicd
+        type: JWK
+        x509_default: 36h
+        x509_max: 72h
+        x509_min: 20m
+      args: "{{ connection_options }}"
+      register: jwk_add
+
+    - name: Add it again
+      matonb.step.provisioner:
+        name: cicd
+        type: JWK
+        x509_default: 36h
+        x509_max: 72h
+        x509_min: 20m
+      args: "{{ connection_options }}"
+      register: jwk_again
+
+    - name: Assert a password was generated and the claims settled
+      ansible.builtin.assert:
+        that:
+          - jwk_add is changed
+          - jwk_add.generated_password is defined
+          - jwk_again is not changed
+        fail_msg: "JWK creation over the Admin API did not behave"
+
+    - name: Stash the generated password so the CA can be asked to honour it
+      ansible.builtin.copy:
+        content: "{{ jwk_add.generated_password }}"
+        dest: "{{ ca_dir }}/generated.pass"
+        mode: "0600"
+      no_log: true
+
+    - name: Prove the generated password unlocks the provisioner key
+      ansible.builtin.command:
+        argv:
+          - step
+          - ca
+          - certificate
+          - integration.example.com
+          - "{{ ca_dir }}/leaf.crt"
+          - "{{ ca_dir }}/leaf.key"
+          - --ca-url
+          - "{{ ca_url }}"
+          - --root
+          - "{{ ca_dir }}/root_ca.crt"
+          - --provisioner
+          - cicd
+          - --provisioner-password-file
+          - "{{ ca_dir }}/generated.pass"
+          - --force
+      environment:
+        STEPPATH: "{{ ca_dir }}/steppath"
+      changed_when: true
+
+    - name: Assert a real certificate came back
+      ansible.builtin.stat:
+        path: "{{ ca_dir }}/leaf.crt"
+      register: leaf
+
+    - name: The CA signed it
+      ansible.builtin.assert:
+        that: leaf.stat.exists and leaf.stat.size > 0
+        fail_msg: >-
+          The generated provisioner password did not yield a certificate
+
+    - name: Change a claim
+      matonb.step.provisioner:
+        name: cicd
+        type: JWK
+        x509_default: 48h
+        x509_max: 72h
+        x509_min: 20m
+      args: "{{ connection_options }}"
+      register: drift
+
+    - name: Assert only the changed claim was reconciled
+      ansible.builtin.assert:
+        that:
+          - drift is changed
+          - drift.updated == ['x509_default']
+        fail_msg: "Claim reconciliation did not target the drifted claim"
+
+    - name: Read the provisioners straight from the running CA
+      ansible.builtin.uri:
+        ca_path: "{{ ca_dir }}/root_ca.crt"
+        url: "{{ ca_url }}/provisioners"
+      register: live
+
+    - name: Assert the change is live in the CA without any restart
+      ansible.builtin.assert:
+        that:
+          - live.json.provisioners | selectattr('name', 'eq', 'cicd')
+            | map(attribute='claims.defaultTLSCertDuration')
+            | first == '48h0m0s'
+        fail_msg: >-
+          The Admin API change is not visible in the running CA
+
+    - name: Remove the ACME provisioner
+      matonb.step.provisioner:
+        name: acme
+        state: absent
+      args: "{{ connection_options }}"
+      register: acme_remove
+
+    - name: Remove it again
+      matonb.step.provisioner:
+        name: acme
+        state: absent
+      args: "{{ connection_options }}"
+      register: acme_remove_again
+
+    - name: Assert removal and idempotence
+      ansible.builtin.assert:
+        that:
+          - acme_remove is changed
+          - not acme_remove.restart_required
+          - acme_remove_again is not changed
+        fail_msg: "Admin mode removal did not behave"
+
+    - name: Checksum ca.json after every mutation
+      ansible.builtin.stat:
+        checksum_algorithm: sha256
+        path: "{{ ca_dir }}/ca.json"
+      register: ca_json_after
+
+    - name: Assert nothing was written to ca.json
+      # Independent of the module's own management_mode reporting: a config
+      # fallback would have rewritten exactly this file.
+      ansible.builtin.assert:
+        that: ca_json_after.stat.checksum == ca_json_before.stat.checksum
+        fail_msg: >-
+          ca.json changed during admin mode, so step took the config path

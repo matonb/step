@@ -1,0 +1,74 @@
+---
+name: Test (sanity & units)
+
+"on":
+  push:
+    branches:
+      - main
+  pull_request:
+
+# ansible-core is pinned for the same reason lint.yml pins its hook versions:
+# the sanity test set changes between minors, so an unpinned install lets CI
+# drift ahead of what anyone verified locally and breaks unrelated PRs on
+# checks the gate has never seen. Bump both together, deliberately.
+#
+# Note that ansible-core 2.20 requires Python >= 3.12, so the Python version
+# and the pin have to move together too.
+env:
+  ANSIBLE_CORE_VERSION: "2.20.5"
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  # ansible-test refuses to run outside an ansible_collections/<ns>/<name>
+  # tree, so both jobs check out into one.
+  sanity:
+    name: Sanity
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout into a collection path
+        uses: actions/checkout@v7
+        with:
+          path: ansible_collections/matonb/step
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install ansible-core
+        run: |
+          python -m pip install --upgrade pip
+          pip install "ansible-core==${ANSIBLE_CORE_VERSION}"
+
+      - name: Run sanity tests
+        working-directory: ansible_collections/matonb/step
+        run: ansible-test sanity --python ${{ env.PYTHON_VERSION }}
+
+  units:
+    name: Unit tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout into a collection path
+        uses: actions/checkout@v7
+        with:
+          path: ansible_collections/matonb/step
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install ansible-core
+        run: |
+          python -m pip install --upgrade pip
+          pip install "ansible-core==${ANSIBLE_CORE_VERSION}"
+
+      - name: Run unit tests
+        working-directory: ansible_collections/matonb/step
+        # --requirements installs tests/unit/requirements.txt, which carries
+        # pytest-xdist; ansible-test always invokes pytest with -n.
+        run: >-
+          ansible-test units
+          --python ${{ env.PYTHON_VERSION }} --requirements

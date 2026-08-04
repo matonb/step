@@ -1,0 +1,186 @@
+---
+# Drives the provisioner module against a CA that keeps its provisioners in
+# ca.json. The CA directory is bind-mounted into the container, so the module
+# edits the same file the running CA loaded, which is what makes the
+# restart_required contract observable.
+#
+# Note the reload after every change. In config mode `add`/`remove` edit
+# ca.json while `list` reads the CA's *loaded* configuration over HTTP, so the
+# two disagree until step-ca is reloaded. That is why the module reports
+# restart_required, and why a real play pairs these tasks with
+# `notify: restart step-ca`.
+- name: Config mode (ca.json)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ca_dir: "{{ lookup('env', 'STEP_TEST_CONFIG_DIR') }}"
+    ca_url: "{{ lookup('env', 'STEP_TEST_CONFIG_URL') }}"
+    container: "{{ lookup('env', 'STEP_TEST_CONFIG_CONTAINER') }}"
+    connection_options:
+      # ca_config must be explicit here. The CA writes container-absolute paths
+      # into config/defaults.json ("ca-config": "/home/step/config/ca.json"),
+      # and the step CLI loads that file as its flag defaults, so without this
+      # it resolves a path that does not exist on the host. The same applies to
+      # anyone managing a containerised CA from outside the container.
+      ca_config: "{{ ca_dir }}/config/ca.json"
+      ca_path: "{{ ca_dir }}"
+      ca_url: "{{ ca_url }}"
+      root: "{{ ca_dir }}/certs/root_ca.crt"
+  tasks:
+    - name: Add an ACME provisioner (check mode)
+      matonb.step.provisioner:
+        name: acme
+        type: ACME
+      args: "{{ connection_options }}"
+      check_mode: true
+      register: acme_check
+
+    - name: Check mode must not have touched ca.json
+      ansible.builtin.command: "grep -c acme {{ ca_dir }}/config/ca.json"
+      register: check_grep
+      changed_when: false
+      failed_when: false
+
+    - name: Add an ACME provisioner
+      matonb.step.provisioner:
+        name: acme
+        type: ACME
+      args: "{{ connection_options }}"
+      register: acme_add
+
+    - name: Assert the mode, the change, and that a restart IS demanded
+      ansible.builtin.assert:
+        that:
+          - acme_check is changed
+          - check_grep.stdout | int == 0
+          - acme_add.management_mode == 'config'
+          - acme_add is changed
+          - acme_add.restart_required
+        fail_msg: "Config mode add/check-mode/restart_required incorrect"
+
+    - name: The provisioner landed in ca.json, not the database
+      ansible.builtin.command: "grep -c acme {{ ca_dir }}/config/ca.json"
+      register: after_grep
+      changed_when: false
+
+    - name: The running CA has NOT picked it up yet
+      ansible.builtin.uri:
+        ca_path: "{{ ca_dir }}/certs/root_ca.crt"
+        url: "{{ ca_url }}/provisioners"
+      register: before_reload
+
+    - name: Assert ca.json was edited and the change is not yet live
+      ansible.builtin.assert:
+        that:
+          - after_grep.stdout | int > 0
+          - >-
+            'acme' not in
+            (before_reload.json.provisioners | map(attribute='name') | list)
+        fail_msg: >-
+          Expected ca.json to be edited and the running CA to be unaware
+
+    - name: Reload the CA, which is what restart_required is telling you to do
+      ansible.builtin.command: "docker kill -s HUP {{ container }}"
+      changed_when: true
+
+    - name: Wait for the reload
+      ansible.builtin.uri:
+        ca_path: "{{ ca_dir }}/certs/root_ca.crt"
+        url: "{{ ca_url }}/provisioners"
+      register: after_reload
+      until: >-
+        'acme' in
+        (after_reload.json.provisioners | map(attribute='name') | list)
+      retries: 15
+      delay: 2
+
+    - name: Add it again, now that the CA agrees with the file
+      matonb.step.provisioner:
+        name: acme
+        type: ACME
+      args: "{{ connection_options }}"
+      register: acme_again
+
+    - name: Assert idempotence
+      ansible.builtin.assert:
+        that: acme_again is not changed
+        fail_msg: "Re-adding an existing provisioner should be a no-op"
+
+    - name: Add a JWK provisioner with a claim
+      matonb.step.provisioner:
+        name: cicd
+        type: JWK
+        x509_min: 20m
+      args: "{{ connection_options }}"
+      register: jwk_add
+
+    - name: Reload so the CA reports it
+      ansible.builtin.command: "docker kill -s HUP {{ container }}"
+      changed_when: true
+
+    - name: Wait for the reload
+      ansible.builtin.uri:
+        ca_path: "{{ ca_dir }}/certs/root_ca.crt"
+        url: "{{ ca_url }}/provisioners"
+      register: with_jwk
+      until: >-
+        'cicd' in
+        (with_jwk.json.provisioners | map(attribute='name') | list)
+      retries: 15
+      delay: 2
+
+    - name: Re-run with the same claim
+      matonb.step.provisioner:
+        name: cicd
+        type: JWK
+        x509_min: 20m
+      args: "{{ connection_options }}"
+      register: jwk_again
+
+    - name: Change the claim
+      matonb.step.provisioner:
+        name: cicd
+        type: JWK
+        x509_min: 45m
+      args: "{{ connection_options }}"
+      register: drift
+
+    - name: Assert the generated password, idempotence and reconciliation
+      ansible.builtin.assert:
+        that:
+          - jwk_add is changed
+          - jwk_add.generated_password is defined
+          - jwk_again is not changed
+          - drift is changed
+          - drift.updated == ['x509_min']
+        fail_msg: "Claim reconciliation did not behave in config mode"
+
+    - name: Reload before removing, so list and ca.json agree
+      ansible.builtin.command: "docker kill -s HUP {{ container }}"
+      changed_when: true
+
+    - name: Wait for the reload
+      ansible.builtin.uri:
+        ca_path: "{{ ca_dir }}/certs/root_ca.crt"
+        url: "{{ ca_url }}/provisioners"
+      register: settled
+      until: >-
+        'cicd' in
+        (settled.json.provisioners | map(attribute='name') | list)
+      retries: 15
+      delay: 2
+
+    - name: Remove the ACME provisioner
+      matonb.step.provisioner:
+        name: acme
+        state: absent
+      args: "{{ connection_options }}"
+      register: acme_remove
+
+    - name: Assert removal demands a restart too
+      ansible.builtin.assert:
+        that:
+          - acme_remove is changed
+          - acme_remove.restart_required
+        fail_msg: "Config mode removal did not behave"

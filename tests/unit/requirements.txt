@@ -1,0 +1,4 @@
+# Read by `ansible-test units --requirements`.
+# pytest-xdist is required because ansible-test always invokes pytest with -n.
+pytest
+pytest-xdist
