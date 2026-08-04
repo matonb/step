@@ -14,7 +14,7 @@ The `run_command` function in `plugins/module_utils/process.py` provides a unifi
 ```python
 def run_command(
     command: Union[List[str], str],
-    debug: bool = False,
+    logger: Optional[Callable[[str], None]] = None,
     env_vars: Optional[Dict[str, str]] = None,
     shell: bool = False,
     username: Optional[str] = None,
@@ -29,7 +29,7 @@ def run_command(
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `command` | `List[str]` or `str` | Required | The command to execute as either a list of arguments or a string |
-| `debug` | `bool` | `False` | If `True`, prints the command before execution |
+| `logger` | `Callable[[str], None]` | `None` | If set, called with the command before execution. Modules should pass `module.log`; a module must never write to stdout |
 | `env_vars` | `Dict[str, str]` | `None` | Additional environment variables for the command |
 | `shell` | `bool` | `False` | Whether to run the command through a shell |
 | `username` | `str` | `None` | System user to run the command as (requires root privileges) |

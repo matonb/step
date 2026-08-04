@@ -66,26 +66,149 @@ Modify Step CA configuration JSON file (ca.json). Supports top-level parameters 
 
 ## matonb.step.provisioner
 
+Creates, updates and removes provisioners. Works against both management modes —
+see [Management modes](#management-modes) below.
+
+> **The CA must be running.** `step ca provisioner list` reads the CA's
+> `/provisioners` HTTP endpoint, so this module needs a reachable, running
+> step-ca in *both* modes, not just admin mode.
+
 ### Parameters
 
-| Parameter          | Type    | Required | Default   | Description                                                                                             |
-| ------------------ | ------- | -------- | --------- | ------------------------------------------------------------------------------------------------------- |
-| `ca_path`          | path    | no       |           | Optional path to the step CA configuration directory (sets STEPPATH)                                    |
-| `ca_root`          | path    | no       |           | Optional path to the CA root certificate                                                                |
-| `ca_url`           | string  | no       |           | Optional URL of the step CA                                                                             |
-| `debug`            | boolean | no       | `false`   | If true, prints CLI commands before execution                                                           |
-| `fingerprint`      | string  | no       |           | Optional fingerprint for CA root                                                                        |
-| `name`             | string  | yes      |           | Name of the provisioner to manage                                                                       |
-| `run_as`           | string  | no       |           | System user to run Step CLI commands as (typically should be set to `step` for proper access to the CA) |
-| `state`            | string  | no       | `present` | Desired state: `present` or `absent`                                                                    |
-| `type`             | string  | no       |           | Type of provisioner (required when creating a new provisioner)                                          |
-| `x509_default_dur` | string  | no       | `36h`     | Default certificate duration for X509 certificates                                                      |
-| `x509_max_dur`     | string  | no       | `72h`     | Maximum certificate duration for X509 certificates                                                      |
-| `x509_min_dur`     | string  | no       | `20m`     | Minimum certificate duration for X509 certificates                                                      |
+| Parameter             | Type    | Required | Default   | Description                                                                                             |
+| --------------------- | ------- | -------- | --------- | ------------------------------------------------------------------------------------------------------- |
+| `admin_cert`          | path    | no       |           | Admin certificate (chain) in PEM format. Requires `admin_key`. Admin mode only                          |
+| `admin_key`           | path    | no       |           | Private key matching `admin_cert`. Requires `admin_cert`. Admin mode only                               |
+| `admin_password_file` | path    | no       |           | File holding the password that decrypts `admin_provisioner`'s key. Required in admin mode               |
+| `admin_provisioner`   | string  | no       |           | Provisioner used to mint admin credentials. Required in admin mode                                      |
+| `admin_subject`       | string  | no       |           | Subject of the CA administrator (`step` by default). Required in admin mode                             |
+| `ca_config`           | path    | no       |           | Path to `ca.json`. Defaults to `config/ca.json` under `ca_path`                                         |
+| `ca_path`             | path    | no       |           | Optional path to the step CA configuration directory (sets STEPPATH)                                    |
+| `ca_url`              | string  | no       |           | Optional URL of the step CA. Falls back to the CA's `defaults.json`                                     |
+| `context`             | string  | no       |           | Optional step context name to operate in                                                                |
+| `debug`               | boolean | no       | `false`   | If true, prints CLI commands to stderr before execution                                                 |
+| `fingerprint`         | string  | no       |           | **Deprecated, unused.** Removed in 2.0.0 — see [Deprecations](#deprecations)                             |
+| `management_mode`     | string  | no       | `auto`    | `auto`, `admin` or `config` — see [Management modes](#management-modes)                                  |
+| `name`                | string  | yes      |           | Name of the provisioner to manage                                                                       |
+| `password`            | string  | no       |           | Password for the provisioner key. Generated when omitted. Not used for ACME                             |
+| `root`                | path    | no       |           | Path to the CA root certificate, used to verify `ca_url`. Alias: `ca_root` (deprecated)                  |
+| `run_as`              | string  | no       |           | System user to run Step CLI commands as (typically should be set to `step` for proper access to the CA) |
+| `state`               | string  | no       | `present` | Desired state: `present` or `absent`                                                                    |
+| `type`                | string  | no       |           | Type of provisioner (required when creating a new provisioner)                                          |
+| `x509_default`        | string  | no       |           | Default certificate duration for X509 certificates                                                      |
+| `x509_max`            | string  | no       |           | Maximum certificate duration for X509 certificates                                                      |
+| `x509_min`            | string  | no       |           | Minimum certificate duration for X509 certificates                                                      |
+
+The `x509_*` options have no default. A claim that is left unset is inherited
+from the CA's own defaults and is not reconciled; a claim that is set is kept at
+that value on every run.
+
+### Management modes
+
+step-ca stores provisioners in one of two places, and the step CLI decides which
+by probing the CA rather than by taking a flag.
+
+| Mode     | Provisioners live in | Changed via     | `restart_required` |
+| -------- | -------------------- | --------------- | ------------------ |
+| `config` | `ca.json`            | editing the file | `true`             |
+| `admin`  | the CA database      | the Admin API    | `false`            |
+
+A CA is in admin mode when it was initialised with `remote_management: true`,
+which sets `authority.enableAdmin` in `ca.json`. With `management_mode: auto`
+(the default) the module reads that setting and follows it.
+
+Admin API changes take effect immediately, so `restart_required` is `false` in
+admin mode. In config mode the file is edited in place and step-ca must be
+restarted or sent SIGHUP, so it is `true`.
+
+`management_mode: admin` and `management_mode: config` **assert** a mode rather
+than force one — the step CLI always picks the path itself from what the CA
+reports. The setting controls whether the module accepts the outcome: if step
+takes the other path the task fails rather than reporting a change that did not
+land where you expected.
+
+### Admin mode authentication
+
+Admin mode needs credentials. There are two ways to supply them, and **every
+value the step CLI is not given it prompts for, which hangs the task** — so the
+module validates the combination up front and fails immediately instead.
+
+**Just-in-time credentials** — what `step ca init --remote-management` sets up.
+The CLI signs a short-lived admin certificate on demand. All three options are
+required:
+
+```yaml
+- name: Manage a provisioner on an admin-mode CA
+  matonb.step.provisioner:
+    admin_password_file: /etc/step-ca/secrets/provisioner_password
+    admin_provisioner: admin        # a JWK provisioner the admin is bound to
+    admin_subject: step             # the super admin created at init time
+    ca_path: /etc/step-ca
+    ca_url: https://ca.example.com
+    name: acme
+    run_as: step
+    type: ACME
+```
+
+**An existing admin certificate** — supply both halves:
+
+```yaml
+- name: Manage a provisioner with an admin certificate
+  matonb.step.provisioner:
+    admin_cert: /etc/step-ca/admin.crt
+    admin_key: /etc/step-ca/admin.key
+    ca_path: /etc/step-ca
+    ca_url: https://ca.example.com
+    name: acme
+    run_as: step
+    type: ACME
+```
+
+The admin key must be unencrypted. step loads it without a password option and
+would prompt for one, so `admin_password_file` is rejected alongside
+`admin_cert`.
+
+### Upgrading from 1.0.x
+
+Three behaviours changed for existing config-mode users:
+
+- **Existing provisioners are now reconciled.** Previously `state: present` on a
+  provisioner that already existed was a no-op. It now compares the `x509_*`
+  claims you set and runs `step ca provisioner update` when they differ, so the
+  first run after upgrading may report `changed` on provisioners you last
+  touched by hand. Claims you do not set are still left alone.
+- **`restart_required` is no longer always `true` on change.** It is `false` in
+  admin mode, where the change is already live.
+- **A JWK add now fails if the password file cannot be handed to `run_as`.**
+  The old code fell back to making that file world-readable.
+
+`generated_password` is returned in plaintext, so it lands in the play recap and
+callback logs. Set `no_log: true` on the task, or supply `password` yourself, if
+that matters to you.
+
+### Deprecations
+
+| Option        | Status                                                                                             |
+| ------------- | -------------------------------------------------------------------------------------------------- |
+| `ca_root`     | Renamed to `root` to match the step CLI flag. Kept as an alias, removed in 2.0.0                   |
+| `fingerprint` | Never had any effect. No `step ca provisioner` subcommand accepts a fingerprint. Removed in 2.0.0  |
+
+`fingerprint` applies to `step ca bootstrap` and `step ca root`, which establish
+trust in a CA; it has no meaning once you are managing provisioners.
 
 ### Provisioner Types
 
-The module supports the following provisioner types:
+**Creating** a provisioner is supported for `ACME` and `JWK` only. Any other
+type fails with a clear message rather than producing something half-configured,
+because each type needs its own options (`--client-id`, `--x5c-roots`,
+`--nebula-root` and so on) that this module does not yet expose.
+
+**Listing, reconciling and removing** work for every type the CA reports, so
+`state: absent` and the `x509_*` claims can be used against provisioners of any
+type — including ones created by hand with the step CLI.
+
+`type` accepts all of the following. When creating, it must be `ACME` or `JWK`;
+otherwise it acts as a filter alongside `name`.
 
 - `ACME`
 - `AWS`
@@ -109,14 +232,17 @@ X509 duration parameters accept time units as follows:
 
 ## Return Values
 
-| Key                | Type    | Description                                                                       |
-| ------------------ | ------- | --------------------------------------------------------------------------------- |
-| `changed`          | boolean | Whether any changes were made                                                     |
-| `name`             | string  | The name of the provisioner being managed                                         |
-| `provisioners`     | list    | List of provisioners that matched the specified name and (optional) type          |
-| `restart_required` | boolean | Indicates if the step-ca service needs to be restarted for changes to take effect |
-| `state`            | string  | The desired state as requested                                                    |
-| `type`             | string  | The type of the provisioner (if provided as a filter)                             |
+| Key                  | Type    | Description                                                                                    |
+| -------------------- | ------- | ---------------------------------------------------------------------------------------------- |
+| `changed`            | boolean | Whether any changes were made                                                                  |
+| `generated_password` | string  | The generated provisioner password, returned only when the module invented one                 |
+| `management_mode`    | string  | The mode used, `admin` or `config`                                                             |
+| `name`               | string  | The name of the provisioner being managed                                                      |
+| `provisioners`       | list    | List of provisioners that matched the specified name and (optional) type                       |
+| `restart_required`   | boolean | Whether step-ca must be restarted for the change to take effect. Always `false` in admin mode  |
+| `state`              | string  | The desired state as requested                                                                 |
+| `type`               | string  | The type of the provisioner (if provided as a filter)                                          |
+| `updated`            | list    | Claim parameters reconciled on an existing provisioner                                         |
 
 ## Examples
 

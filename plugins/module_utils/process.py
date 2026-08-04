@@ -1,3 +1,5 @@
+# Copyright: (c) 2025, Brett Maton <matonb@users.noreply.github.com>
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 """Process utilities for executing commands.
 
 This module provides functions to run shell commands, optionally as another
@@ -13,6 +15,7 @@ import os
 import pwd
 import re
 import subprocess
+from collections.abc import Callable
 from typing import Optional, Union
 
 
@@ -168,7 +171,7 @@ def _handle_command_failure(result: subprocess.CompletedProcess, check: bool, te
 def run_command(
     command: Union[list[str], str],
     *,
-    debug: bool = False,
+    logger: Optional[Callable[[str], None]] = None,
     env_vars: Optional[dict[str, str]] = None,
     shell: bool = False,
     username: Optional[str] = None,
@@ -181,7 +184,9 @@ def run_command(
 
     Args:
         command: The command to execute as a list of args or a string.
-        debug: If True, print the command before executing.
+        logger: Optional callable that records the command before it runs.
+            Modules should pass C(module.log). A module must never write to
+            stdout, which Ansible parses as the module's JSON result.
         env_vars: Additional environment variables to include during execution.
         shell: Whether to run the command using the shell.
         username: The target system user to impersonate.
@@ -205,10 +210,9 @@ def run_command(
     if env_vars:
         user_env.update(env_vars)
 
-    # Debug output
-    if debug:
+    if logger:
         cmd_str = command if isinstance(command, str) else " ".join(command)
-        print(f"Executing command: {cmd_str}")
+        logger(f"Executing command: {cmd_str}")
 
     # If timeout is specified, use the select-based approach
     if timeout is not None:

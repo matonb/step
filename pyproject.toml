@@ -6,7 +6,7 @@ requires = ["setuptools", "wheel"]
 authors = [{ name = "Brett Maton", email = "brett@example.com" }]
 description = "Ansible collection for managing Smallstep Certificate Authority"
 dynamic = ["version"]
-license = { text = "MIT" }
+license = { text = "GPL-3.0-or-later" }
 name = "matonb.step"
 requires-python = ">=3.9"
 
@@ -33,7 +33,6 @@ ignore = [
     "S101", # Use of assert
     "S603", # subprocess call - needed for Ansible modules
     "S607", # subprocess call with shell - sometimes needed
-    "T201", # print found (for debug output in modules)
 
     # Type annotations (can be enabled gradually)
     "ANN", # Skip all type annotations for now
@@ -143,9 +142,19 @@ max-statements = 60
 ]
 "plugins/modules/*.py" = [
     "D103",    # missing docstring in public function (main functions)
+    "E402",    # module level import not at top of file
+    #          Ansible's validate-modules requires DOCUMENTATION/EXAMPLES/RETURN
+    #          to appear before any import, which is the opposite of E402.
     "PLR0912", # Too many branches
     "PLR0915", # Too many statements
 ]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+# Mirrors the "unwanted functions" that ansible-test's pylint plugin rejects
+# (ansible_test/.../pylint/plugins/unwanted.py), so ruff catches them locally
+# rather than leaving them to CI. `print` is covered by T201 and
+# `tempfile.mktemp` by S306, both of which are enabled above.
+"sys.exit".msg = "Use module.exit_json() or module.fail_json() so Ansible receives a result."
 
 [tool.ruff.lint.pydocstyle]
 convention = "google" # Use Google-style docstrings

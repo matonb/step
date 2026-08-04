@@ -1,4 +1,255 @@
+# Copyright: (c) 2025, Brett Maton <matonb@users.noreply.github.com>
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 """Initialize a Step CA instance."""
+
+DOCUMENTATION = r"""
+---
+module: initialize
+short_description: Initialize a Step CA instance
+version_added: "1.0.0"
+description:
+  - This module initializes a new Step CA instance with the specified configuration.
+  - It can create standalone, linked, or hosted deployments.
+  - >-
+    Passing C(remote_management) enables the Admin API, which stores
+    provisioners in the CA database instead of C(ca.json) and creates a super
+    administrator. It requires a database, so it cannot be combined with
+    C(no_db), and C(admin_subject) is only valid alongside it.
+options:
+  acme:
+    description:
+      - Create a default ACME provisioner.
+      - Requires a database, so it cannot be combined with I(no_db).
+    required: false
+    type: bool
+  address:
+    description:
+      - The address and port the new CA will listen on, for example C(0.0.0.0:443).
+    required: false
+    type: str
+  admin_subject:
+    description:
+      - Subject of the first super administrator. Defaults to C(step).
+      - Only valid when I(remote_management) is enabled.
+    required: false
+    type: str
+  authority:
+    description:
+      - The name that will serve as the authority name for the context.
+    required: false
+    type: str
+  context:
+    description:
+      - The name of the context for the new authority.
+    required: false
+    type: str
+  credentials_file:
+    description:
+      - Path to the registration authority credentials file.
+    required: false
+    type: path
+  debug:
+    description:
+      - If true, prints the step command to stderr before execution for debugging purposes.
+    required: false
+    type: bool
+    default: false
+  deployment_type:
+    description:
+      - The deployment type to use.
+      - >-
+        C(standalone) is an instance of step-ca that does not connect to any
+        cloud services; you manage the authority keys and configuration
+        yourself.
+      - >-
+        C(linked) is an instance with locally managed keys that connects to a
+        Certificate Manager account for provisioner management, alerting,
+        reporting and revocation.
+      - C(hosted) is a fully managed instance run by smallstep.
+    required: false
+    type: str
+    choices: ['standalone', 'linked', 'hosted']
+    default: standalone
+  dns:
+    description:
+      - The DNS names or IP addresses of the new CA.
+    required: false
+    type: list
+    elements: str
+  force:
+    description:
+      - Replace any existing certificates, secrets and configuration found at I(path).
+      - Without this the module fails rather than overwrite an existing CA.
+    required: false
+    type: bool
+    default: false
+  helm:
+    description:
+      - Generate a Helm values YAML to be used with the step-certificates chart.
+      - Not implemented; supplying it fails the task.
+    required: false
+    type: bool
+  issuer:
+    description:
+      - The registration authority issuer URL, used with I(ra).
+    required: false
+    type: str
+  issuer_fingerprint:
+    description:
+      - The fingerprint of the registration authority issuer CA certificate.
+    required: false
+    type: str
+  issuer_provisioner:
+    description:
+      - The name of the provisioner used with the registration authority issuer.
+    required: false
+    type: str
+  key:
+    description:
+      - Path to an existing private key file for the root certificate authority.
+      - Must be supplied together with I(root).
+    required: false
+    type: path
+  key_password_file:
+    description:
+      - Path to the file containing the password that decrypts the existing root certificate key.
+    required: false
+    type: path
+  kms:
+    description:
+      - The key management service to use for generating and storing keys.
+    required: false
+    type: str
+    choices: ['azurekms']
+  kms_intermediate:
+    description:
+      - The KMS URI used to generate the intermediate certificate key.
+    required: false
+    type: str
+  kms_root:
+    description:
+      - The KMS URI used to generate the root certificate key.
+    required: false
+    type: str
+  kms_ssh_host:
+    description:
+      - The KMS URI used to generate the key that signs SSH host certificates.
+    required: false
+    type: str
+  kms_ssh_user:
+    description:
+      - The KMS URI used to generate the key that signs SSH user certificates.
+    required: false
+    type: str
+  name:
+    description:
+      - The name of the new PKI.
+    required: true
+    type: str
+  no_db:
+    description:
+      - Initialise the CA without a database.
+      - Incompatible with I(remote_management) and I(acme), which both require one.
+    required: false
+    type: bool
+  password_file:
+    description:
+      - Path to the file containing the password used to encrypt the keys.
+    required: true
+    type: path
+  path:
+    description:
+      - Where step stores its configuration, state and Certificate Authority data.
+      - Sets the STEPPATH environment variable for the step command.
+    required: true
+    type: path
+  pki:
+    description:
+      - Generate only the PKI, without the CA configuration.
+    required: false
+    type: bool
+  profile:
+    description:
+      - The name that will serve as the profile name for the context.
+    required: false
+    type: str
+  provisioner:
+    description:
+      - The name of the first provisioner.
+    required: false
+    type: str
+    default: admin
+  provisioner_password_file:
+    description:
+      - Path to the file containing the password used to encrypt the provisioner key.
+    required: true
+    type: path
+  ra:
+    description:
+      - The type of registration authority to create.
+    required: false
+    type: str
+    choices: ['StepCAS', 'CloudCAS']
+  remote_management:
+    description:
+      - Enable the Admin API so provisioners are managed remotely rather than in C(ca.json).
+      - Requires a database, so it cannot be combined with I(no_db).
+    required: false
+    type: bool
+  root:
+    description:
+      - Path to an existing PEM file to be used as the root certificate authority.
+      - Must be supplied together with I(key).
+    required: false
+    type: path
+  ssh:
+    description:
+      - Create keys for signing SSH certificates.
+    required: false
+    type: bool
+  with_ca_url:
+    description:
+      - The URI of the Step Certificate Authority to write into C(defaults.json).
+    required: false
+    type: str
+author:
+  - Brett Maton (@matonb)
+"""
+
+EXAMPLES = r"""
+- name: Initialize a standalone Step CA
+  matonb.step.initialize:
+    name: "My CA"
+    path: "/etc/step-ca"
+    password_file: "/path/to/password"
+    provisioner_password_file: "/path/to/provisioner_password"
+
+- name: Initialize a Step CA with remote management (admin mode)
+  matonb.step.initialize:
+    admin_subject: step
+    name: "My CA"
+    path: "/etc/step-ca"
+    password_file: "/path/to/password"
+    provisioner_password_file: "/path/to/provisioner_password"
+    remote_management: true
+"""
+
+RETURN = r"""
+admin_subject:
+  description: Subject of the super administrator, or null when remote management is disabled.
+  returned: success
+  type: str
+
+changed:
+  description: Indicates if the module made changes
+  returned: always
+  type: bool
+
+management_mode:
+  description: How provisioners will be managed, either C(admin) or C(config).
+  returned: success
+  type: str
+"""
 
 import os
 import pathlib
@@ -12,158 +263,57 @@ from ansible_collections.matonb.step.plugins.module_utils.process import (
     run_command,
 )
 
-DOCUMENTATION = r"""
----
-module: initialize
-short_description: Initialize a Step CA instance
-version_added: "1.0.0"
-description:
-  - This module initializes a new Step CA instance with the specified configuration.
-  - It can create standalone, linked, or hosted deployments.
-options:
-  name:
-    description:
-      - The name of the new PKI.
-    required: true
-    type: str
-  # Other options documented similarly...
-author:
-  - Brett Maton (@matonb)
-"""
-
-EXAMPLES = r"""
-- name: Initialize a standalone Step CA
-  matonb.step.initialize:
-    name: "My CA"
-    path: "/etc/step-ca"
-    password_file: "/path/to/password"
-    provisioner_password_file: "/path/to/provisioner_password"
-"""
-
-RETURN = r"""
-changed:
-  description: Indicates if the module made changes
-  returned: always
-  type: bool
-"""
-
 
 def get_argument_spec() -> dict[str, dict[str, Any]]:
     """Return the argument specification for the initialize module.
+
+    Option descriptions live in DOCUMENTATION, which is the only place Ansible
+    surfaces them to users.
 
     Returns:
         Dict[str, Dict[str, Any]]: The module's argument specification
     """
     return {
         "acme": {"type": "bool"},
-        "address": {
-            "type": "str",
-            "help": "The address and port that the new CA will listen at e.g 0.0.0.0:443",
-        },
-        "admin_subject": {
-            "type": "str",
-            "help": "The admin subject to use for generating admin credentials",
-        },
+        "address": {"type": "str"},
+        "admin_subject": {"type": "str"},
         "authority": {"type": "str"},
         "context": {"type": "str"},
         "credentials_file": {"type": "path"},
+        "debug": {"type": "bool", "default": False},
         "deployment_type": {
             "type": "str",
             "choices": ["standalone", "linked", "hosted"],
             "default": "standalone",
-            "help": (
-                "The name of the deployment type to use. Options are:\n"
-                "  standalone: An instance of step-ca that does not connect to "
-                "any cloud services.\n"
-                "              You manage authority keys and configuration "
-                "yourself.\n"
-                "              Choose standalone if you'd like to run step-ca "
-                "yourself and do not\n"
-                "              want cloud services or commercial support.\n"
-                "\n"
-                "  linked:     An instance of step-ca with locally managed "
-                "keys that connects to your\n"
-                "              Certificate Manager account for provisioner "
-                "management, alerting, \n"
-                "              reporting, revocation, and other managed "
-                "services.\n"
-                "              Choose linked if you'd like cloud services and "
-                "support, but need to\n"
-                "              control your authority's signing keys.\n"
-                "\n"
-                "  hosted:     A highly available, fully-managed instance of "
-                "step-ca run by smallstep\n"
-                "              just for you.\n"
-                "              Choose hosted if you'd like cloud services and "
-                "support"
-            ),
         },
-        "dns": {
-            "type": "list",
-            "elements": "str",
-            "help": "The DNS name or IP addresses of the new CA",
-        },
-        "force": {
-            "type": "bool",
-            "default": False,
-            "help": "Will replace all existing certificates, secrets and configuration",
-        },
-        "helm": {
-            "type": "bool",
-            "help": ("NOT IMPLEMENTED - Generates a Helm values YAML to be used with step-certificates chart"),
-        },
+        "dns": {"type": "list", "elements": "str"},
+        "force": {"type": "bool", "default": False},
+        "helm": {"type": "bool"},
         "issuer": {"type": "str"},
         "issuer_fingerprint": {"type": "str"},
         "issuer_provisioner": {"type": "str"},
-        "key": {
-            "type": "path",
-            "help": "The path of an existing key file of the root certificate authority",
-        },
-        "key_password_file": {
-            "type": "path",
-            "help": ("The path to the file containing the password to decrypt the existing root certificate key"),
-            "no_log": True,
-        },
+        "key": {"type": "path"},
+        "key_password_file": {"type": "path", "no_log": False},
         "kms": {"type": "str", "choices": ["azurekms"]},
         "kms_intermediate": {"type": "str"},
         "kms_root": {"type": "str"},
         "kms_ssh_host": {"type": "str"},
-        "kms_ssh_user": {
-            "type": "str",
-            "help": ("The kms URI used to generate the key used to sign SSH user certificates"),
-        },
-        "name": {"type": "str", "required": True, "help": "The name of the new PKI"},
+        "kms_ssh_user": {"type": "str"},
+        "name": {"type": "str", "required": True},
         "no_db": {"type": "bool"},
-        "password_file": {
-            "type": "path",
-            "required": True,
-            "help": "The path to the file containing the password to encrypt the keys",
-            "no_log": True,
-        },
-        "path": {
-            "type": "path",
-            "help": ("Specifies the location where step stores its configuration, state, and Certificate Authority data"),
-            "required": True,
-        },
-        "pki": {
-            "type": "bool",
-            "help": "Generate only the PKI without the CA configuration",
-        },
+        # The *_password_file options name a file rather than hold a secret;
+        # no_log is set explicitly so Ansible's name-based heuristic does not
+        # flag them.
+        "password_file": {"type": "path", "required": True, "no_log": False},
+        "path": {"type": "path", "required": True},
+        "pki": {"type": "bool"},
         "profile": {"type": "str"},
         "provisioner": {"type": "str", "default": "admin"},
-        "provisioner_password_file": {
-            "type": "path",
-            "required": True,
-            "help": "The path to the file containing the password to encrypt the provisioner key",
-            "no_log": True,
-        },
+        "provisioner_password_file": {"type": "path", "required": True, "no_log": False},
         "ra": {"type": "str", "choices": ["StepCAS", "CloudCAS"]},
         "remote_management": {"type": "bool"},
-        "root": {
-            "type": "path",
-            "help": "The path of an existing PEM file to be used as the root certificate authority",
-        },
-        "ssh": {"type": "bool", "help": "Create keys to sign SSH certificates"},
+        "root": {"type": "path"},
+        "ssh": {"type": "bool"},
         "with_ca_url": {"type": "str"},
     }
 
@@ -182,6 +332,7 @@ def build_initialize_command(params: dict[str, Any]) -> list[str]:
     # Process string parameters with values
     param_keys = [
         "address",
+        "admin_subject",
         "authority",
         "context",
         "credentials_file",
@@ -212,12 +363,6 @@ def build_initialize_command(params: dict[str, Any]) -> list[str]:
             value = str(params[key]).strip()
             if value:
                 cmd.extend([f"--{key.replace('_', '-')}", value])
-
-    # Add admin subject if remote management is enabled
-    if params.get("remote_management") and params.get("admin_subject"):
-        value = str(params["admin_subject"]).strip()
-        if value:
-            cmd.extend(["--admin-subject", value])
 
     # Add boolean flag parameters
     boolean_flags = {
@@ -275,6 +420,22 @@ def check_existing_ca_files(step_path: str, force: bool = False) -> Optional[str
     return None
 
 
+def validate_admin_options(module: AnsibleModule) -> None:
+    """Reject option combinations that step itself rejects.
+
+    Checking here means the task fails with a clear message instead of
+    spawning step only to have it exit non-zero.
+
+    Args:
+        module: The Ansible module instance
+    """
+    if module.params.get("remote_management") and module.params.get("no_db"):
+        module.fail_json(msg="'remote_management' requires a database and cannot be combined with 'no_db'.")
+
+    if module.params.get("admin_subject") and not module.params.get("remote_management"):
+        module.fail_json(msg="'admin_subject' is only supported when 'remote_management' is enabled.")
+
+
 def run_step_ca_initialize(module: AnsibleModule) -> None:
     """Run the step CA initialize command with provided parameters.
 
@@ -292,7 +453,8 @@ def run_step_ca_initialize(module: AnsibleModule) -> None:
         result = run_command(
             command=command,
             timeout=timeout,
-            debug=True,
+            logger=module.log if module.params.get("debug") else None,
+            env_vars={"STEPPATH": module.params["path"]},
             check=False,  # We'll handle the return code ourselves
         )
 
@@ -320,12 +482,17 @@ def main() -> None:
     """Run the Ansible module."""
     module = AnsibleModule(argument_spec=get_argument_spec(), supports_check_mode=True)
 
-    # Ensure STEPPATH is set when we invoke the step command
     step_path = module.params["path"]
-    os.environ["STEPPATH"] = step_path
 
     if module.params["helm"]:
         module.fail_json(msg="Helm support is not yet implemented.")
+
+    validate_admin_options(module)
+
+    # Provisioners of a remote-management CA live in the CA database and are
+    # managed through the Admin API; every other CA keeps them in ca.json.
+    management_mode = "admin" if module.params.get("remote_management") else "config"
+    admin_subject = module.params.get("admin_subject") or ("step" if management_mode == "admin" else None)
 
     # Check for existing CA files
     error_msg = check_existing_ca_files(step_path, force=module.params.get("force", False))
@@ -334,13 +501,23 @@ def main() -> None:
 
     # In check mode, report that changes would be made
     if module.check_mode:
-        module.exit_json(changed=True, msg="Check mode: Step CA would be initialized")
+        module.exit_json(
+            changed=True,
+            msg="Check mode: Step CA would be initialized",
+            admin_subject=admin_subject,
+            management_mode=management_mode,
+        )
 
     # Run step CA initialization
     try:
         run_step_ca_initialize(module)
         # Exit with success message
-        module.exit_json(changed=True, msg="Step CA initialization completed successfully.")
+        module.exit_json(
+            changed=True,
+            msg="Step CA initialization completed successfully.",
+            admin_subject=admin_subject,
+            management_mode=management_mode,
+        )
     except Exception as exc:
         module.fail_json(msg=f"Unexpected error: {str(exc)}")
 

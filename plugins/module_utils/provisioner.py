@@ -1,30 +1,128 @@
-"""Step CA provisioner dataclasses.
+# Copyright: (c) 2025, Brett Maton <matonb@users.noreply.github.com>
+# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
+"""Step CA provisioner models and CRUD operations.
 
-This module defines dataclasses and helper classes for managing
-Step CA provisioners.
+This module defines:
 
-It includes:
-- Data models for general provisioners and specific types like JWK and ACME.
-- A StepCAContext class to execute step CLI commands with CA-specific
-  configuration.
-- CLI interactions that support user impersonation, environment overrides,
-  and debugging.
+- Data models for provisioners, plus the type-specific arguments each one needs
+  when it is created.
+- :data:`X509_CLAIMS`, the single mapping between module parameters, step CLI
+  flags and the claim keys the CA reports, which drives flag rendering and
+  drift detection alike.
+- :class:`StepProvisionerClient`, which turns those into step CLI invocations.
 
-Designed for use in Ansible modules to automate provisioning in Step CA
-environments.
+The client is deliberately unaware of which management mode the CA is in: the
+commands are identical either way, and the connection supplies any admin
+credentials. See :mod:`connection` for the mode handling.
 """
 
 import json
 import os
-import pwd
-import stat
-import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from subprocess import CompletedProcess
 from typing import Optional
 
-from .process import run_command
-from .utils import generate_secure_password
+from .connection import StepConnection
+from .utils import generate_secure_password, parse_duration, write_secret_file
+
+# Seconds to allow a step command before assuming it is waiting on input that
+# will never arrive. Minting an admin credential involves a round trip to the
+# CA, so this is generous.
+COMMAND_TIMEOUT = 60
+
+
+@dataclass(frozen=True)
+class ClaimSpec:
+    """Links a module parameter to its step flag and reported claim key."""
+
+    param: str
+    flag: str
+    key: str
+
+
+# The x509 duration claims this collection manages. Adding a claim here is
+# enough for it to be sent on add/update and compared for drift.
+X509_CLAIMS = (
+    ClaimSpec("x509_default", "--x509-default-dur", "defaultTLSCertDuration"),
+    ClaimSpec("x509_max", "--x509-max-dur", "maxTLSCertDuration"),
+    ClaimSpec("x509_min", "--x509-min-dur", "minTLSCertDuration"),
+)
+
+
+@dataclass(frozen=True)
+class AddArguments:
+    """Type-specific arguments for C(step ca provisioner add)."""
+
+    args: list[str] = field(default_factory=list)
+    password: Optional[str] = None
+    secret_file: Optional[str] = None
+
+
+def claim_flags(desired: dict[str, Optional[str]]) -> list[str]:
+    """Render requested claims as step CLI flags.
+
+    Args:
+        desired: Requested claim values keyed by module parameter name.
+            Entries that are None are left to the CA's own defaults.
+
+    Returns:
+        List[str]: Flag/value pairs for the claims that were requested.
+    """
+    flags: list[str] = []
+    for spec in X509_CLAIMS:
+        value = desired.get(spec.param)
+        if value:
+            flags.extend([spec.flag, value])
+    return flags
+
+
+def claim_drift(desired: dict[str, Optional[str]], claims: dict) -> list[str]:
+    """Find requested claims whose value on the CA differs.
+
+    Durations are compared numerically because the CA normalises them when it
+    serialises: a claim requested as C(5m) is reported as C(5m0s).
+
+    Args:
+        desired: Requested claim values keyed by module parameter name.
+        claims: The C(claims) object reported for the existing provisioner.
+
+    Returns:
+        List[str]: Parameter names that need updating, in table order.
+
+    Raises:
+        ValueError: If a requested or reported duration cannot be parsed.
+            Treating it as drift instead would update the provisioner on every
+            run without ever settling.
+    """
+    drifted: list[str] = []
+    for spec in X509_CLAIMS:
+        wanted = desired.get(spec.param)
+        if not wanted:
+            # Not managed by this task; whatever the CA has is correct.
+            continue
+
+        actual = claims.get(spec.key)
+        if actual is None:
+            # The claim is unset, so the provisioner inherits the authority
+            # default rather than the value asked for.
+            drifted.append(spec.param)
+            continue
+
+        try:
+            wanted_ns = parse_duration(wanted)
+        except ValueError as exc:
+            raise ValueError(f"Invalid value for '{spec.param}': {exc}") from exc
+
+        try:
+            actual_ns = parse_duration(str(actual))
+        except ValueError as exc:
+            raise ValueError(f"The CA reported an unreadable '{spec.key}' for this provisioner: {exc}") from exc
+
+        if wanted_ns != actual_ns:
+            drifted.append(spec.param)
+
+    return drifted
 
 
 @dataclass
@@ -53,21 +151,17 @@ class Provisioner(ABC):
         return result
 
     @abstractmethod
-    def prepare_add_command(
-        self, base_command: list[str], context: "StepCAContext", **kwargs
-    ) -> tuple[list[str], Optional[str], Optional[str]]:
-        """Prepare command for adding this type of provisioner.
+    def add_arguments(self, password: Optional[str] = None, run_as: Optional[str] = None) -> AddArguments:
+        """Build the arguments this provisioner type needs when created.
 
         Args:
-            base_command: Base command list to extend
-            context: The StepCA context
-            **kwargs: Additional provisioner-specific parameters
+            password: Password supplied by the user, if any.
+            run_as: System user the step command will be demoted to, which
+                must be able to read any secret file that gets written.
 
         Returns:
-            Tuple containing:
-            - The final command list
-            - Generated/provided password (if applicable)
-            - Path to temporary password file (if created)
+            AddArguments: Extra arguments, the password used, and any
+            temporary file the caller must remove.
         """
 
 
@@ -89,276 +183,212 @@ class JWKProvisioner(Provisioner):
         result["encryptedKey"] = self.encrypted_key
         return result
 
-    def prepare_add_command(
-        self, base_command: list[str], context: "StepCAContext", **kwargs
-    ) -> tuple[list[str], Optional[str], Optional[str]]:
-        """Prepare command for adding a JWK provisioner.
+    def add_arguments(self, password: Optional[str] = None, run_as: Optional[str] = None) -> AddArguments:
+        """Create the JWK key pair and the password file that encrypts it.
+
+        C(--create) and C(--password-file) are consumed only by the JWK branch
+        of C(step ca provisioner add), so they belong here rather than in the
+        shared command.
 
         Args:
-            base_command: Base command list to extend
-            context: The StepCA context
-            **kwargs: Additional parameters including optional password
+            password: Password to encrypt the new key with. A secure password
+                is generated when none is supplied.
+            run_as: System user that must be able to read the password file.
 
         Returns:
-            Tuple containing:
-            - The final command list
-            - Generated/provided password
-            - Path to temporary password file
+            AddArguments: The JWK creation flags and the password used.
         """
-        password = kwargs.get("password")
         actual_password = password if password is not None else generate_secure_password()
-
-        # Create temporary password file
-        fd, password_file = tempfile.mkstemp(text=True)
-        os.close(fd)
-
-        # Write password and set permissions
-        with open(password_file, "w", encoding="utf-8") as f:
-            f.write(actual_password)
-
-        os.chmod(password_file, stat.S_IRUSR | stat.S_IWUSR)
-
-        # Handle user ownership if needed
-        if context.run_as:
-            try:
-                user_info = pwd.getpwnam(context.run_as)
-                os.chown(password_file, user_info.pw_uid, user_info.pw_gid)
-            except (KeyError, OSError):
-                os.chmod(
-                    password_file,
-                    stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH,
-                )
-
-        # Add password file option
-        command = base_command.copy()
-        command.extend(["--password-file", password_file])
-
-        return command, actual_password, password_file
+        password_file = write_secret_file(actual_password, owner=run_as)
+        return AddArguments(
+            args=["--create", "--password-file", password_file],
+            password=actual_password,
+            secret_file=password_file,
+        )
 
 
 @dataclass
 class ACMEProvisioner(Provisioner):
     """Provisioner that uses the ACME protocol."""
 
-    def prepare_add_command(
-        self, base_command: list[str], context: "StepCAContext", **kwargs
-    ) -> tuple[list[str], Optional[str], Optional[str]]:
-        """Prepare command for adding an ACME provisioner.
+    def add_arguments(self, password: Optional[str] = None, run_as: Optional[str] = None) -> AddArguments:
+        """Return the arguments for an ACME provisioner.
 
         Args:
-            base_command: Base command list to extend
-            context: The StepCA context
-            **kwargs: Additional parameters (not used for ACME)
+            password: Unused; ACME provisioners have no key to encrypt.
+            run_as: Unused; no secret file is written.
 
         Returns:
-            Tuple containing:
-            - The final command list
-            - None for password (not needed)
-            - None for password file (not needed)
+            AddArguments: An empty argument set.
         """
-        # ACME doesn't need any special handling
-        return base_command.copy(), None, None
+        return AddArguments()
 
 
 @dataclass
-class StepCAContext:
-    """Configuration context for Step CLI interactions.
+class GenericProvisioner(Provisioner):
+    """A provisioner of a type this collection cannot create.
 
-    Provides helper methods to load and remove provisioners using the
-    Step CLI, with support for switching users, injecting environment
-    variables, and toggling debug output.
+    Modelling these rather than discarding them keeps C(state: absent) and
+    claim reconciliation working for every type the CA reports; only creation
+    needs type-specific knowledge.
     """
 
-    ca_path: Optional[str] = None
-    ca_root: Optional[str] = None
-    ca_url: Optional[str] = None
-    debug: bool = False
-    fingerprint: Optional[str] = None
-    run_as: Optional[str] = None
-    x509_min: Optional[str] = None
-    x509_max: Optional[str] = None
-    x509_default: Optional[str] = None
-
-    def _build_env(self) -> Optional[dict[str, str]]:
-        """Construct environment variables for CLI execution.
-
-        Returns:
-            dict or None: Dictionary of environment variables.
-        """
-        return {"STEPPATH": self.ca_path} if self.ca_path else None
-
-    def _extend_command(self, command: list[str]) -> list[str]:
-        """Append CA-related CLI flags to the base command.
+    def add_arguments(self, password: Optional[str] = None, run_as: Optional[str] = None) -> AddArguments:
+        """Refuse to build creation arguments for an unsupported type.
 
         Args:
-            command (List[str]): Base command as a list of arguments.
-
-        Returns:
-            List[str]: Command list with extended options.
-        """
-        if self.ca_root:
-            command.extend(["--ca-root", self.ca_root])
-        if self.ca_url:
-            command.extend(["--ca-url", self.ca_url])
-        if self.fingerprint:
-            command.extend(["--fingerprint", self.fingerprint])
-
-        # Add X509 duration parameters if provided
-        if self.x509_min:
-            command.extend(["--x509-min-dur", self.x509_min])
-        if self.x509_max:
-            command.extend(["--x509-max-dur", self.x509_max])
-        if self.x509_default:
-            command.extend(["--x509-default-dur", self.x509_default])
-
-        return command
-
-    def load_provisioners(self) -> list[Provisioner]:
-        """Load the current list of provisioners via the Step CLI.
-
-        Returns:
-            List[Provisioner]: A list of provisioner objects.
+            password: Unused.
+            run_as: Unused.
 
         Raises:
-            RuntimeError: If the command or JSON parsing fails.
-
+            ValueError: Always; this type cannot be created by the collection.
         """
-        command = self._extend_command(["step", "ca", "provisioner", "list"])
+        raise ValueError(
+            f"Creating a provisioner of type '{self.type}' is not supported. "
+            f"Supported types are: {', '.join(sorted(_PROVISIONER_CLASSES))}."
+        )
+
+
+# Provisioner types this collection can create. Any other type is modelled as a
+# GenericProvisioner, so it can still be listed, reconciled and removed.
+_PROVISIONER_CLASSES: dict[str, type[Provisioner]] = {
+    "ACME": ACMEProvisioner,
+    "JWK": JWKProvisioner,
+}
+
+
+def build_provisioner(item: dict) -> Provisioner:
+    """Build a provisioner model from one entry of the CA's provisioner list.
+
+    Args:
+        item: A decoded provisioner object from C(step ca provisioner list).
+
+    Returns:
+        Provisioner: The model for the entry.
+    """
+    provisioner_type = item.get("type")
+    provisioner_class = _PROVISIONER_CLASSES.get(provisioner_type, GenericProvisioner)
+
+    init_args = {
+        "name": item.get("name"),
+        "type": provisioner_type,
+        "claims": item.get("claims") or {},
+        "options": item.get("options") or {},
+    }
+    if provisioner_class is JWKProvisioner:
+        init_args["key"] = item.get("key", {})
+        init_args["encrypted_key"] = item.get("encryptedKey", "")
+
+    return provisioner_class(**init_args)
+
+
+@dataclass(frozen=True)
+class StepProvisionerClient:
+    """Create, read, update and remove provisioners through the step CLI."""
+
+    connection: StepConnection
+
+    def list(self) -> list[Provisioner]:
+        """Load the CA's current provisioners.
+
+        C(step ca provisioner list) reads the CA's public provisioners
+        endpoint, so it needs no admin credentials and behaves the same in
+        both management modes.
+
+        Returns:
+            List[Provisioner]: Every provisioner the CA reports.
+
+        Raises:
+            RuntimeError: If the command fails or its output is not JSON.
+        """
+        argv = self.connection.command("ca provisioner list")
+        result = self.connection.run(argv, timeout=COMMAND_TIMEOUT)
+
         try:
-            result = run_command(
-                command,
-                username=self.run_as,
-                env_vars=self._build_env(),
-                debug=self.debug,
-            )
             raw_data = json.loads(result.stdout)
         except json.JSONDecodeError as err:
             raise RuntimeError("Failed to parse JSON from step output.") from err
 
-        provisioners: list[Provisioner] = []
-        for _, item in enumerate(raw_data):
-            ptype = item.get("type")
-            cls = _PROVISIONER_CLASSES.get(ptype)
-            if cls is None:
-                continue
+        return [build_provisioner(item) for item in raw_data]
 
-            init_args = {
-                "name": item.get("name"),
-                "type": ptype,
-                "claims": item.get("claims", {}),
-                "options": item.get("options", {}),
-            }
-            if cls is JWKProvisioner:
-                init_args["key"] = item.get("key", {})
-                init_args["encrypted_key"] = item.get("encryptedKey", "")
-
-            provisioner = cls(**init_args)
-            provisioners.append(provisioner)
-
-        return provisioners
-
-    def remove_provisioner(self, name: str) -> None:
-        """Remove a specific provisioner via the Step CLI.
-
-        Args:
-            name (str): The name of the provisioner to remove.
-
-        Raises:
-            RuntimeError: If the CLI command fails.
-        """
-        command = self._extend_command(["step", "ca", "provisioner", "remove", name])
-        run_command(
-            command,
-            username=self.run_as,
-            env_vars=self._build_env(),
-            debug=self.debug,
-        )
-
-    def add_provisioner(
+    def add(
         self,
         name: str,
         provisioner_type: str,
-        x509_min: Optional[str] = None,
-        x509_max: Optional[str] = None,
-        x509_default: Optional[str] = None,
+        claims: dict[str, Optional[str]],
         password: Optional[str] = None,
-    ) -> Optional[str]:
-        """Add a new provisioner via the Step CLI.
+    ) -> tuple[CompletedProcess, Optional[str]]:
+        """Create a provisioner.
 
         Args:
-            name: The name for the new provisioner.
-            provisioner_type: The type of provisioner to create.
-            x509_min: Minimum certificate duration for X509 certificates.
-            x509_max: Maximum certificate duration for X509 certificates.
-            x509_default: Default certificate duration for X509 certificates.
-            password: Password for the provisioner. If not provided,
-                    a secure password will be generated.
-                    Not used for ACME provisioners.
+            name: Name for the new provisioner.
+            provisioner_type: The provisioner type to create.
+            claims: Requested claim values keyed by module parameter name.
+            password: Password for the provisioner key. Generated when omitted
+                and the type needs one.
 
         Returns:
-            Optional[str]: The password used for the provisioner (generated or provided),
-                        or None if the provisioner type doesn't require a password.
+            Tuple of the completed command and the password used, which is
+            None for types that have no key.
 
         Raises:
-            RuntimeError: If the CLI command fails.
-            ValueError: If the provisioner type is not supported.
+            ValueError: If the provisioner type cannot be created.
         """
-        provisioner_class = _PROVISIONER_CLASSES.get(provisioner_type)
-        if provisioner_class is None:
-            raise ValueError(f"Unsupported provisioner type: {provisioner_type}")
+        provisioner_class = _PROVISIONER_CLASSES.get(provisioner_type, GenericProvisioner)
+        provisioner = provisioner_class(name=name, type=provisioner_type)
+        # GenericProvisioner raises here, before anything is written.
+        extra = provisioner.add_arguments(password=password, run_as=self.connection.run_as)
 
-        # Create base command
-        base_command = self._extend_command(
-            [
-                "step",
-                "ca",
-                "provisioner",
-                "add",
+        try:
+            argv = self.connection.command(
+                "ca provisioner add",
                 name,
                 "--type",
                 provisioner_type,
-                "--create",
-            ]
-        )
-
-        # Add duration parameters if provided
-        if x509_min:
-            base_command.extend(["--x509-min-dur", x509_min])
-        if x509_max:
-            base_command.extend(["--x509-max-dur", x509_max])
-        if x509_default:
-            base_command.extend(["--x509-default-dur", x509_default])
-
-        # Create the provisioner instance
-        provisioner = provisioner_class(name=name, type=provisioner_type)
-
-        password_file = None
-        try:
-            # Let the provisioner prepare its specific command
-            command, actual_password, password_file = provisioner.prepare_add_command(
-                base_command, self, password=password
+                *extra.args,
+                *claim_flags(claims),
             )
-
-            # Execute the command
-            run_command(
-                command,
-                username=self.run_as,
-                env_vars=self._build_env(),
-                debug=self.debug,
-            )
-
-            return actual_password
+            result = self.connection.run(argv, timeout=COMMAND_TIMEOUT)
         finally:
-            # Clean up the temporary file if it was created
-            if password_file and os.path.exists(password_file):
-                try:
-                    os.remove(password_file)
-                except OSError:
-                    pass
+            _remove_file(extra.secret_file)
+
+        return result, extra.password
+
+    def update(self, name: str, claims: dict[str, Optional[str]]) -> CompletedProcess:
+        """Apply requested claims to an existing provisioner.
+
+        Args:
+            name: Name of the provisioner to update.
+            claims: Requested claim values keyed by module parameter name.
+
+        Returns:
+            subprocess.CompletedProcess: The completed command.
+        """
+        argv = self.connection.command("ca provisioner update", name, *claim_flags(claims))
+        return self.connection.run(argv, timeout=COMMAND_TIMEOUT)
+
+    def remove(self, name: str) -> CompletedProcess:
+        """Remove a provisioner.
+
+        Args:
+            name: Name of the provisioner to remove.
+
+        Returns:
+            subprocess.CompletedProcess: The completed command.
+        """
+        argv = self.connection.command("ca provisioner remove", name)
+        return self.connection.run(argv, timeout=COMMAND_TIMEOUT)
 
 
-# Fixed the protected class access warning by elevating the classes to the module level
-_PROVISIONER_CLASSES: dict[str, type[Provisioner]] = {
-    "JWK": JWKProvisioner,
-    "ACME": ACMEProvisioner,
-}
+def _remove_file(path: Optional[str]) -> None:
+    """Remove a temporary file, ignoring one that has already gone.
+
+    Args:
+        path: Path to remove, or None.
+    """
+    if not path:
+        return
+    try:
+        os.remove(path)
+    except OSError:
+        pass
