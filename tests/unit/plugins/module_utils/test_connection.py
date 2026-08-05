@@ -22,6 +22,8 @@ from ansible_collections.matonb.step.plugins.module_utils.connection import (
     StepConnection,
     configured_mode,
     observed_mode,
+    read_authority,
+    read_provisioners,
 )
 
 # Every subcommand the module can issue.
@@ -288,6 +290,53 @@ class TestConfiguredMode:
         connection = StepConnection(ca_path=str(tmp_path), ca_config=str(elsewhere))
         assert connection.config_file() == str(elsewhere)
         assert configured_mode(connection)[0] is ManagementMode.ADMIN
+
+    def test_a_null_authority_reads_as_config_not_a_crash(self, tmp_path):
+        # Previously this raised AttributeError out of configured_mode and
+        # reached the user as a traceback. An absent authority block means
+        # admin was never enabled, which is config mode.
+        mode, error = configured_mode(self.write_ca_json(tmp_path, None))
+        assert (mode, error) == (ManagementMode.CONFIG, None)
+
+    def test_a_non_object_authority_reports_an_error(self, tmp_path):
+        mode, error = configured_mode(self.write_ca_json(tmp_path, "nonsense"))
+        assert mode is None
+        assert "not a JSON object" in error
+
+
+class TestCaJsonStructure:
+    """Telling "nothing configured" apart from "this file is not a ca.json"."""
+
+    @pytest.mark.parametrize(
+        "config",
+        [{}, {"authority": None}, {"authority": {}}],
+        ids=["empty", "null-authority", "empty-authority"],
+    )
+    def test_an_absent_authority_block_reads_as_empty(self, config):
+        assert read_authority(config, "ca.json") == ({}, None)
+
+    @pytest.mark.parametrize("config", [["array"], "string", 3, None], ids=["array", "string", "int", "null"])
+    def test_a_file_that_is_not_an_object_is_an_error(self, config):
+        authority, error = read_authority(config, "ca.json")
+        assert (authority, "does not hold a JSON object" in error) == ({}, True)
+
+    def test_provisioners_are_returned_verbatim(self):
+        entries = [{"name": "acme", "type": "ACME"}]
+        assert read_provisioners({"authority": {"provisioners": entries}}, "ca.json") == (entries, None)
+
+    @pytest.mark.parametrize(
+        ("config", "expected"),
+        [
+            ({"authority": {"provisioners": {"acme": {}}}}, "is not a list"),
+            ({"authority": {"provisioners": ["acme"]}}, "entry that is not a JSON object"),
+            ({"authority": "nonsense"}, "not a JSON object"),
+        ],
+        ids=["mapping", "list-of-strings", "bad-authority"],
+    )
+    def test_a_misshapen_provisioner_list_is_an_error(self, config, expected):
+        entries, error = read_provisioners(config, "ca.json")
+        assert entries == []
+        assert expected in error
 
 
 class TestEnvironment:

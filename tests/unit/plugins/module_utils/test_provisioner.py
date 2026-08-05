@@ -9,7 +9,7 @@ import subprocess
 
 import pytest
 
-from ansible_collections.matonb.step.plugins.module_utils.connection import StepConnection
+from ansible_collections.matonb.step.plugins.module_utils.connection import ManagementMode, StepConnection
 from ansible_collections.matonb.step.plugins.module_utils.provisioner import (
     COMMAND_TIMEOUT,
     X509_CLAIMS,
@@ -33,9 +33,9 @@ def completed(stdout="", stderr=""):
 class RecordingConnection(StepConnection):
     """A StepConnection that records commands instead of running them."""
 
-    def __init__(self, stdout="[]", error=None):
+    def __init__(self, stdout="[]", error=None, **connection):
         """Record commands, optionally raising instead of running."""
-        super().__init__()
+        super().__init__(**connection)
         object.__setattr__(self, "calls", [])
         object.__setattr__(self, "timeouts", [])
         object.__setattr__(self, "_stdout", stdout)
@@ -148,16 +148,24 @@ class TestAddArguments:
             GenericProvisioner(name="o", type="OIDC").add_arguments()
 
 
+def write_ca_config(tmp_path, provisioners, key="provisioners"):
+    """Write a ca.json holding the given provisioner entries."""
+    config_file = tmp_path / "ca.json"
+    config_file.write_text(json.dumps({"authority": {key: provisioners}}), encoding="utf-8")
+    return str(config_file)
+
+
 class TestStepProvisionerClient:
-    def test_list_parses_every_reported_provisioner(self):
+    def test_admin_mode_reads_the_running_ca(self):
         payload = json.dumps([{"name": "admin", "type": "JWK"}, {"name": "corp", "type": "OIDC"}])
         client = StepProvisionerClient(RecordingConnection(stdout=payload))
-        assert [(p.name, p.type) for p in client.list()] == [("admin", "JWK"), ("corp", "OIDC")]
+        listed = client.list(ManagementMode.ADMIN)
+        assert [(p.name, p.type) for p in listed] == [("admin", "JWK"), ("corp", "OIDC")]
 
     def test_list_rejects_output_that_is_not_json(self):
         client = StepProvisionerClient(RecordingConnection(stdout="not json"))
         with pytest.raises(RuntimeError, match="JSON"):
-            client.list()
+            client.list(ManagementMode.ADMIN)
 
     def test_add_builds_the_expected_command(self, tmp_path, monkeypatch):
         monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
@@ -198,8 +206,114 @@ class TestStepProvisionerClient:
         monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
         connection = RecordingConnection()
         client = StepProvisionerClient(connection)
-        client.list()
+        client.list(ManagementMode.ADMIN)
         client.add("acme", "ACME", NO_CLAIMS)
         client.update("acme", NO_CLAIMS)
         client.remove("acme")
         assert connection.timeouts == [COMMAND_TIMEOUT] * 4
+
+
+class TestConfigModeListing:
+    """Config mode must read ca.json, the file add/update/remove write to.
+
+    Reading the CA instead reports its *loaded* configuration, so a task
+    re-running before step-ca has been sent SIGHUP does not see the provisioner
+    it just created and tries to create it again (issue #31).
+    """
+
+    def test_provisioners_come_from_ca_json_without_running_a_command(self, tmp_path):
+        config_file = write_ca_config(
+            tmp_path,
+            [{"name": "acme", "type": "ACME"}, {"name": "cicd", "type": "JWK"}],
+        )
+        connection = RecordingConnection(ca_config=config_file)
+        listed = StepProvisionerClient(connection).list(ManagementMode.CONFIG)
+
+        assert [(p.name, p.type) for p in listed] == [("acme", "ACME"), ("cicd", "JWK")]
+        # The CA is never consulted, so this works with step-ca stopped.
+        assert connection.calls == []
+
+    def test_ca_json_is_located_under_ca_path(self, tmp_path):
+        (tmp_path / "config").mkdir()
+        write_ca_config(tmp_path / "config", [{"name": "acme", "type": "ACME"}])
+        connection = RecordingConnection(ca_path=str(tmp_path))
+        listed = StepProvisionerClient(connection).list(ManagementMode.CONFIG)
+        assert [p.name for p in listed] == ["acme"]
+
+    def test_claims_survive_the_change_of_source(self, tmp_path):
+        # Drift detection compares against these, so they have to arrive intact.
+        config_file = write_ca_config(
+            tmp_path,
+            [{"name": "cicd", "type": "JWK", "claims": {"minTLSCertDuration": "20m0s"}}],
+        )
+        listed = StepProvisionerClient(RecordingConnection(ca_config=config_file)).list(ManagementMode.CONFIG)
+        assert claim_drift({**NO_CLAIMS, "x509_min": "20m"}, listed[0].claims) == []
+
+    def test_either_source_yields_the_same_provisioner(self, tmp_path):
+        # ca.json entries and endpoint entries are the same shape; if they ever
+        # diverge, build_provisioner() needs to know about it.
+        entry = {"name": "cicd", "type": "JWK", "key": {"kid": "abc"}, "encryptedKey": "enc"}
+        from_ca = StepProvisionerClient(RecordingConnection(stdout=json.dumps([entry]))).list(ManagementMode.ADMIN)
+        from_config = StepProvisionerClient(RecordingConnection(ca_config=write_ca_config(tmp_path, [entry]))).list(
+            ManagementMode.CONFIG
+        )
+        assert from_ca[0].to_dict() == from_config[0].to_dict()
+
+    def test_a_ca_json_with_no_provisioners_is_empty_not_an_error(self, tmp_path):
+        connection = RecordingConnection(ca_config=write_ca_config(tmp_path, None))
+        assert StepProvisionerClient(connection).list(ManagementMode.CONFIG) == []
+
+    @pytest.mark.parametrize(
+        "contents",
+        ["{}", '{"authority": null}', '{"authority": {}}', '{"authority": {"provisioners": null}}'],
+        ids=["empty", "null-authority", "empty-authority", "null-provisioners"],
+    )
+    def test_nothing_configured_is_empty_not_an_error(self, tmp_path, contents):
+        # A CA with no provisioners yet is ordinary, and must not be confused
+        # with a ca.json that could not be understood.
+        config_file = tmp_path / "ca.json"
+        config_file.write_text(contents, encoding="utf-8")
+        connection = RecordingConnection(ca_config=str(config_file))
+        assert StepProvisionerClient(connection).list(ManagementMode.CONFIG) == []
+
+    @pytest.mark.parametrize(
+        ("contents", "expected"),
+        [
+            (None, "File not found"),
+            ("{ not json", "Invalid JSON"),
+            ('["an", "array"]', "does not hold a JSON object"),
+            ('{"authority": "nonsense"}', "'authority' entry .* is not a JSON object"),
+            ('{"authority": {"provisioners": {"acme": {}}}}', "'authority.provisioners' .* is not a list"),
+            ('{"authority": {"provisioners": ["acme"]}}', "entry that is not a JSON object"),
+        ],
+        ids=["missing", "malformed", "not-an-object", "authority-not-an-object", "not-a-list", "entry-not-an-object"],
+    )
+    def test_an_unusable_ca_json_raises_and_never_falls_back(self, tmp_path, contents, expected):
+        # Falling back to the CA here would silently reintroduce the very
+        # read/write split this exists to close.
+        config_file = tmp_path / "ca.json"
+        if contents is not None:
+            config_file.write_text(contents, encoding="utf-8")
+
+        connection = RecordingConnection(ca_config=str(config_file))
+        with pytest.raises(RuntimeError, match=expected):
+            StepProvisionerClient(connection).list(ManagementMode.CONFIG)
+        assert connection.calls == []
+
+    def test_an_unreadable_ca_json_raises_and_never_falls_back(self, tmp_path):
+        config_file = tmp_path / "ca.json"
+        config_file.write_text("{}", encoding="utf-8")
+        config_file.chmod(0o000)
+        connection = RecordingConnection(ca_config=str(config_file))
+        try:
+            with pytest.raises(RuntimeError, match="Permission denied"):
+                StepProvisionerClient(connection).list(ManagementMode.CONFIG)
+        finally:
+            config_file.chmod(0o600)
+        assert connection.calls == []
+
+    def test_no_ca_path_or_ca_config_names_both_options(self, tmp_path):
+        connection = RecordingConnection()
+        with pytest.raises(RuntimeError, match=r"'ca_path'.*'ca_config'"):
+            StepProvisionerClient(connection).list(ManagementMode.CONFIG)
+        assert connection.calls == []

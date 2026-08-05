@@ -1,0 +1,62 @@
+---
+# Managing provisioners on a CA initialised with --remote-management.
+#
+# Provisioners live in the CA database, not ca.json, and are changed through
+# the authenticated Admin API. Changes are live immediately, so
+# restart_required is always false and no handler is needed - but the CA has to
+# be running and reachable, and credentials are mandatory.
+#
+# The step CLI prompts for any admin input it is not given, which an Ansible
+# task experiences as a hang rather than a failure. The module rejects
+# incomplete credentials before invoking step, so an error here means something
+# is missing rather than wrong.
+- name: Manage provisioners on a remote-management step-ca
+  hosts: step_ca
+  become: true
+  gather_facts: false
+
+  vars:
+    step_ca_path: /etc/step-ca
+    step_ca_url: https://ca.example.com
+    step_ca_user: step
+
+  tasks:
+    # Credentials minted just in time: the CLI signs a short-lived certificate
+    # for admin_subject using admin_provisioner. This is what
+    # `step ca init --remote-management` sets up.
+    - name: Add an ACME provisioner
+      matonb.step.provisioner:
+        admin_password_file: /etc/step-ca/secrets/provisioner_password
+        admin_provisioner: admin
+        admin_subject: step
+        ca_path: "{{ step_ca_path }}"
+        ca_url: "{{ step_ca_url }}"
+        name: acme
+        run_as: "{{ step_ca_user }}"
+        type: ACME
+      register: acme_provisioner
+
+    - name: Admin API changes need no reload
+      ansible.builtin.assert:
+        that:
+          - acme_provisioner.management_mode == 'admin'
+          - not acme_provisioner.restart_required
+        fail_msg: >-
+          Expected the Admin API to be used. If step fell back to editing
+          ca.json, check that step-ca is running, reachable, and was restarted
+          since remote management was enabled.
+
+    # The alternative to just-in-time credentials: present an admin certificate
+    # and key you already hold. The key must not be encrypted - step loads it
+    # without a password option and would prompt.
+    - name: Add a JWK provisioner using an existing admin certificate
+      matonb.step.provisioner:
+        admin_cert: /etc/step-ca/admin/admin.crt
+        admin_key: /etc/step-ca/admin/admin.key
+        ca_path: "{{ step_ca_path }}"
+        ca_url: "{{ step_ca_url }}"
+        name: cicd
+        run_as: "{{ step_ca_user }}"
+        type: JWK
+        x509_default: 720h
+        x509_max: 17520h

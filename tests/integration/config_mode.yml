@@ -4,11 +4,11 @@
 # edits the same file the running CA loaded, which is what makes the
 # restart_required contract observable.
 #
-# Note the reload after every change. In config mode `add`/`remove` edit
-# ca.json while `list` reads the CA's *loaded* configuration over HTTP, so the
-# two disagree until step-ca is reloaded. That is why the module reports
-# restart_required, and why a real play pairs these tasks with
-# `notify: restart step-ca`.
+# Every task here runs WITHOUT reloading the CA first. That is the point: in
+# config mode `add`/`update`/`remove` edit ca.json, so the module must read
+# ca.json too, or it compares against the CA's stale loaded configuration and
+# fails to converge (issue #31). The single reload at the end proves
+# restart_required still means what it says.
 - name: Config mode (ca.json)
   hosts: localhost
   connection: local
@@ -59,6 +59,17 @@
           - acme_add.restart_required
         fail_msg: "Config mode add/check-mode/restart_required incorrect"
 
+    # Issue #31. The CA has not been reloaded, so its loaded configuration still
+    # has no provisioners. A module that reads the CA rather than ca.json sees
+    # nothing, tries to create acme a second time, and step refuses with
+    # "provisioner with name acme already exists" - failing this task.
+    - name: Re-add immediately, without reloading the CA
+      matonb.step.provisioner:
+        name: acme
+        type: ACME
+      args: "{{ connection_options }}"
+      register: acme_again
+
     - name: The provisioner landed in ca.json, not the database
       ansible.builtin.command: "grep -c acme {{ ca_dir }}/config/ca.json"
       register: after_grep
@@ -70,42 +81,17 @@
         url: "{{ ca_url }}/provisioners"
       register: before_reload
 
-    - name: Assert ca.json was edited and the change is not yet live
+    - name: Assert idempotence against ca.json while the CA is still stale
       ansible.builtin.assert:
         that:
+          - acme_again is not changed
           - after_grep.stdout | int > 0
           - >-
             'acme' not in
             (before_reload.json.provisioners | map(attribute='name') | list)
         fail_msg: >-
-          Expected ca.json to be edited and the running CA to be unaware
-
-    - name: Reload the CA, which is what restart_required is telling you to do
-      ansible.builtin.command: "docker kill -s HUP {{ container }}"
-      changed_when: true
-
-    - name: Wait for the reload
-      ansible.builtin.uri:
-        ca_path: "{{ ca_dir }}/certs/root_ca.crt"
-        url: "{{ ca_url }}/provisioners"
-      register: after_reload
-      until: >-
-        'acme' in
-        (after_reload.json.provisioners | map(attribute='name') | list)
-      retries: 15
-      delay: 2
-
-    - name: Add it again, now that the CA agrees with the file
-      matonb.step.provisioner:
-        name: acme
-        type: ACME
-      args: "{{ connection_options }}"
-      register: acme_again
-
-    - name: Assert idempotence
-      ansible.builtin.assert:
-        that: acme_again is not changed
-        fail_msg: "Re-adding an existing provisioner should be a no-op"
+          Expected a re-run to be a no-op against ca.json while the running CA
+          is still unaware of the change
 
     - name: Add a JWK provisioner with a claim
       matonb.step.provisioner:
@@ -115,22 +101,7 @@
       args: "{{ connection_options }}"
       register: jwk_add
 
-    - name: Reload so the CA reports it
-      ansible.builtin.command: "docker kill -s HUP {{ container }}"
-      changed_when: true
-
-    - name: Wait for the reload
-      ansible.builtin.uri:
-        ca_path: "{{ ca_dir }}/certs/root_ca.crt"
-        url: "{{ ca_url }}/provisioners"
-      register: with_jwk
-      until: >-
-        'cicd' in
-        (with_jwk.json.provisioners | map(attribute='name') | list)
-      retries: 15
-      delay: 2
-
-    - name: Re-run with the same claim
+    - name: Re-run with the same claim, still without a reload
       matonb.step.provisioner:
         name: cicd
         type: JWK
@@ -138,7 +109,7 @@
       args: "{{ connection_options }}"
       register: jwk_again
 
-    - name: Change the claim
+    - name: Change the claim, still without a reload
       matonb.step.provisioner:
         name: cicd
         type: JWK
@@ -156,7 +127,24 @@
           - drift.updated == ['x509_min']
         fail_msg: "Claim reconciliation did not behave in config mode"
 
-    - name: Reload before removing, so list and ca.json agree
+    # Under the #31 bug this is a silent no-op rather than a failure: the module
+    # does not see acme in the CA's loaded configuration, so it reports ok and
+    # leaves the provisioner in ca.json.
+    - name: Remove the ACME provisioner, still without a reload
+      matonb.step.provisioner:
+        name: acme
+        state: absent
+      args: "{{ connection_options }}"
+      register: acme_remove
+
+    - name: Assert removal happened and demands a restart too
+      ansible.builtin.assert:
+        that:
+          - acme_remove is changed
+          - acme_remove.restart_required
+        fail_msg: "Config mode removal did not behave"
+
+    - name: Reload the CA once, as restart_required asked
       ansible.builtin.command: "docker kill -s HUP {{ container }}"
       changed_when: true
 
@@ -164,23 +152,69 @@
       ansible.builtin.uri:
         ca_path: "{{ ca_dir }}/certs/root_ca.crt"
         url: "{{ ca_url }}/provisioners"
-      register: settled
+      register: after_reload
       until: >-
         'cicd' in
-        (settled.json.provisioners | map(attribute='name') | list)
+        (after_reload.json.provisioners | map(attribute='name') | list)
       retries: 15
       delay: 2
 
-    - name: Remove the ACME provisioner
-      matonb.step.provisioner:
-        name: acme
-        state: absent
-      args: "{{ connection_options }}"
-      register: acme_remove
-
-    - name: Assert removal demands a restart too
+    - name: Assert the running CA converged on what ca.json says
       ansible.builtin.assert:
         that:
-          - acme_remove is changed
-          - acme_remove.restart_required
-        fail_msg: "Config mode removal did not behave"
+          - >-
+            'acme' not in
+            (after_reload.json.provisioners | map(attribute='name') | list)
+          - >-
+            (after_reload.json.provisioners
+             | selectattr('name', 'equalto', 'cicd')
+             | map(attribute='claims.minTLSCertDuration')
+             | first) == '45m0s'
+        fail_msg: >-
+          After the reload the CA should serve exactly what ca.json holds:
+          cicd with a 45m minimum, and no acme
+
+    # The README and examples/ both claim config-mode tasks do not need a
+    # running CA, which rests on the step CLI falling back to editing ca.json
+    # when it cannot reach one. Pin it rather than trust it.
+    - name: Stop the CA entirely
+      ansible.builtin.command: "docker stop -t 3 {{ container }}"
+      changed_when: true
+
+    - name: Add a provisioner with no CA running at all
+      matonb.step.provisioner:
+        name: offline
+        type: ACME
+      args: "{{ connection_options }}"
+      register: offline_add
+
+    - name: Re-run with the CA still down
+      matonb.step.provisioner:
+        name: offline
+        type: ACME
+      args: "{{ connection_options }}"
+      register: offline_again
+
+    - name: Assert the change landed and is still idempotent
+      ansible.builtin.assert:
+        that:
+          - offline_add is changed
+          - offline_add.management_mode == 'config'
+          - offline_add.restart_required
+          - offline_again is not changed
+        fail_msg: "Config mode should work against a stopped CA"
+
+    - name: Start the CA again
+      ansible.builtin.command: "docker start {{ container }}"
+      changed_when: true
+
+    - name: The CA serves what was written while it was down
+      ansible.builtin.uri:
+        ca_path: "{{ ca_dir }}/certs/root_ca.crt"
+        url: "{{ ca_url }}/provisioners"
+      register: restarted
+      until: >-
+        'offline' in
+        (restarted.json.provisioners | map(attribute='name') | list)
+      retries: 30
+      delay: 2

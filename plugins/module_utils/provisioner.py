@@ -11,9 +11,10 @@ This module defines:
   drift detection alike.
 - :class:`StepProvisionerClient`, which turns those into step CLI invocations.
 
-The client is deliberately unaware of which management mode the CA is in: the
-commands are identical either way, and the connection supplies any admin
-credentials. See :mod:`connection` for the mode handling.
+Writing is identical in both management modes: the commands are the same and the
+connection supplies any admin credentials. Reading is not, and :meth:`list`
+takes the mode for that reason - see its docstring. Everything else here is
+mode-agnostic; see :mod:`connection` for the mode handling itself.
 """
 
 import json
@@ -23,8 +24,8 @@ from dataclasses import dataclass, field
 from subprocess import CompletedProcess
 from typing import Optional
 
-from .connection import StepConnection
-from .utils import generate_secure_password, parse_duration, write_secret_file
+from .connection import ManagementMode, StepConnection, read_provisioners
+from .utils import generate_secure_password, parse_duration, read_json_file, write_secret_file
 
 # Seconds to allow a step command before assuming it is waiting on input that
 # will never arrive. Minting an admin credential involves a round trip to the
@@ -288,12 +289,11 @@ class StepProvisionerClient:
 
     connection: StepConnection
 
-    def list(self) -> list[Provisioner]:
-        """Load the CA's current provisioners.
-
-        C(step ca provisioner list) reads the CA's public provisioners
-        endpoint, so it needs no admin credentials and behaves the same in
-        both management modes.
+    # The two readers are defined before list(), which shadows the built-in
+    # `list` for the remainder of the class body: a `list[Provisioner]`
+    # annotation below it would be evaluated against the method, not the type.
+    def _list_from_ca(self) -> list[Provisioner]:
+        """Read the provisioners the running CA reports.
 
         Returns:
             List[Provisioner]: Every provisioner the CA reports.
@@ -310,6 +310,66 @@ class StepProvisionerClient:
             raise RuntimeError("Failed to parse JSON from step output.") from err
 
         return [build_provisioner(item) for item in raw_data]
+
+    def _list_from_config(self) -> list[Provisioner]:
+        """Read the provisioners recorded in the CA's C(ca.json).
+
+        An unreadable file is an error rather than a fall back to the CA:
+        falling back would silently reintroduce the read/write split this
+        exists to close.
+
+        Returns:
+            List[Provisioner]: Every provisioner in C(authority.provisioners).
+
+        Raises:
+            RuntimeError: If C(ca.json) cannot be located, read or understood.
+        """
+        config_file = self.connection.config_file()
+        if not config_file:
+            raise RuntimeError(
+                "Cannot read provisioners in config mode without knowing where ca.json is. "
+                "Set 'ca_path' or 'ca_config' to name the file directly. If this CA is actually "
+                "in admin mode, set 'management_mode' to 'admin' and neither is needed."
+            )
+
+        config, error = read_json_file(config_file)
+        if error:
+            raise RuntimeError(f"Cannot read provisioners from '{config_file}': {error}")
+
+        entries, error = read_provisioners(config, config_file)
+        if error:
+            raise RuntimeError(f"Cannot read provisioners: {error}.")
+
+        return [build_provisioner(item) for item in entries]
+
+    def list(self, mode: ManagementMode) -> list[Provisioner]:
+        """Load the current provisioners from wherever this mode stores them.
+
+        The read has to come from the same place the write goes, or the two
+        disagree and the module never converges:
+
+        - **Admin mode** keeps provisioners in the CA database and changes them
+          through the Admin API, so the CA is the source of truth and
+          C(step ca provisioner list) reads it.
+        - **Config mode** edits C(ca.json), which the CA only picks up on SIGHUP.
+          Reading the CA there would report its *loaded* configuration, so a
+          re-run before the reload would not see a provisioner that had just
+          been written and would try to create it again.
+
+        Reading the file also means config-mode tasks need no running CA.
+
+        Args:
+            mode: The resolved management mode.
+
+        Returns:
+            List[Provisioner]: Every provisioner in the relevant source.
+
+        Raises:
+            RuntimeError: If the source cannot be read or parsed.
+        """
+        if mode is ManagementMode.CONFIG:
+            return self._list_from_config()
+        return self._list_from_ca()
 
     def add(
         self,

@@ -1,0 +1,61 @@
+---
+# Managing provisioners on a CA that keeps them in ca.json.
+#
+# This is the default: any CA not initialised with --remote-management. The
+# module edits ca.json in place, so step-ca has to reload before the change is
+# live. That is what restart_required reports, and why every changing task
+# notifies a handler rather than reloading inline - a play adding three
+# provisioners then reloads once, at the end.
+- name: Manage provisioners on a ca.json-managed step-ca
+  hosts: step_ca
+  become: true
+  gather_facts: false
+
+  vars:
+    step_ca_path: /etc/step-ca
+    step_ca_user: step
+
+  handlers:
+    - name: Reload step-ca
+      ansible.builtin.systemd_service:
+        name: step-ca
+        state: reloaded
+
+  tasks:
+    - name: Add an ACME provisioner
+      matonb.step.provisioner:
+        ca_path: "{{ step_ca_path }}"
+        name: acme
+        run_as: "{{ step_ca_user }}"
+        type: ACME
+      notify: Reload step-ca
+
+    - name: Add a JWK provisioner for CI
+      matonb.step.provisioner:
+        ca_path: "{{ step_ca_path }}"
+        name: cicd
+        run_as: "{{ step_ca_user }}"
+        type: JWK
+        x509_default: 720h
+        x509_max: 17520h
+        x509_min: 5m
+      notify: Reload step-ca
+      register: cicd_provisioner
+
+    # The password is only returned on the run that created the key, and only
+    # when the module generated it. Store it somewhere before it is lost - pass
+    # `password` yourself if you would rather supply your own.
+    - name: Report the generated provisioner password
+      ansible.builtin.debug:
+        msg: >-
+          Generated password for cicd:
+          {{ cicd_provisioner.generated_password }}
+      when: cicd_provisioner.generated_password is defined
+
+    - name: Retire an old provisioner
+      matonb.step.provisioner:
+        ca_path: "{{ step_ca_path }}"
+        name: legacy
+        run_as: "{{ step_ca_user }}"
+        state: absent
+      notify: Reload step-ca
