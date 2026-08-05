@@ -213,19 +213,63 @@ def read_json_file(json_file: str) -> tuple[Optional[dict[str, Any]], Optional[s
         return None, f"Invalid data in file: {value_error}"
 
 
-def save_json_file(json_path: str, data: dict[str, Any]) -> dict[str, Any]:
-    """Save JSON data to a file.
+def save_json_file(module, json_path: str, data: dict[str, Any]) -> Optional[str]:
+    """Write JSON to a file atomically, replacing it in one step.
+
+    Writing in place would empty the file before the new contents were
+    complete, so an interruption or a serialisation error would leave a CA
+    configuration that step-ca cannot load. Serialising to a temporary file
+    first means the original survives every failure: either the replacement
+    succeeds whole, or nothing happened at all.
+
+    The temporary file goes in the target's own directory because a rename is
+    only atomic within a single filesystem, and the move is delegated to
+    C(AnsibleModule.atomic_move), which preserves an existing destination's
+    mode, ownership and SELinux context. A destination that does not exist yet
+    is created with the running user's umask.
+
+    A symlink is followed rather than replaced, so a C(ca.json) that points
+    elsewhere keeps pointing there and the file it names is what gets updated.
 
     Args:
+        module: The Ansible module instance, used for the atomic move.
         json_path: The file path where the data will be saved.
         data: The JSON-serializable data to write.
 
     Returns:
-        dict: Success or error information.
+        str or None: An error message, or None on success.
     """
+    target = os.path.realpath(json_path)
+    directory = os.path.dirname(target) or "."
     try:
-        with open(json_path, "w", encoding=ENCODING) as file:
-            json.dump(data, file, indent=4)
+        handle, temporary = tempfile.mkstemp(dir=directory, prefix=".matonb-step-", suffix=".json")
     except OSError as error:
-        return {"error": f"Failed to write JSON file: {str(error)}"}
-    return {"success": True}
+        return f"Failed to write JSON file '{target}': {error}"
+
+    try:
+        with os.fdopen(handle, "w", encoding=ENCODING) as file:
+            json.dump(data, file, indent=4)
+            file.flush()
+            # Without this the rename can be committed before the data behind
+            # it, so a power loss leaves an empty file where the CA config was.
+            os.fsync(file.fileno())
+        # atomic_move raises a bare Exception on failure, and older cores call
+        # fail_json instead, which is a SystemExit. Catching only OSError left
+        # the temporary file behind and lost the error - and a bind-mounted
+        # ca.json gives EBUSY on rename, so this is an ordinary case, not an
+        # exotic one.
+        module.atomic_move(temporary, target)
+    except Exception as error:
+        return f"Failed to write JSON file '{target}': {error}"
+    finally:
+        # The original is untouched whatever happened; take the half-written
+        # copy with us. A finally rather than an except branch because older
+        # cores fail_json inside atomic_move, and that SystemExit has to keep
+        # propagating while still leaving no temporary file behind.
+        if os.path.exists(temporary):
+            try:
+                os.remove(temporary)
+            except OSError:
+                pass
+
+    return None
