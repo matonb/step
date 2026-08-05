@@ -29,6 +29,7 @@ jobs:
         run: |
           ansible-lint roles/
           ansible-lint plugins/
+          ansible-lint examples/
 
       # ruff and yamllint run via pre-commit so CI uses exactly the versions
       # pinned in .pre-commit-config.yaml - the same ones the local commit hook

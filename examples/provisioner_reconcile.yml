@@ -1,0 +1,74 @@
+---
+# Declaring certificate durations and letting re-runs converge (issue #21).
+#
+# The claims a task sets are reconciled on every run: if someone widens
+# x509_max by hand, the next run puts it back and names what it changed in the
+# `updated` return value. Claims the task does not set are left alone, so this
+# does not fight whatever else is configured on the provisioner.
+#
+# Durations are compared numerically, not textually. The CA normalises what it
+# stores - 5m comes back as 5m0s - and that is not treated as drift.
+- name: Keep provisioner certificate durations at their declared values
+  hosts: step_ca
+  become: true
+  gather_facts: false
+
+  vars:
+    step_ca_path: /etc/step-ca
+    step_ca_user: step
+
+    # One place to change a TTL policy, applied to every provisioner listed.
+    step_provisioners:
+      - name: cicd
+        type: JWK
+      - name: acme
+        type: ACME
+
+  handlers:
+    - name: Reload step-ca
+      ansible.builtin.systemd_service:
+        name: step-ca
+        state: reloaded
+
+  tasks:
+    - name: Apply the certificate duration policy
+      matonb.step.provisioner:
+        ca_path: "{{ step_ca_path }}"
+        name: "{{ item.name }}"
+        run_as: "{{ step_ca_user }}"
+        type: "{{ item.type }}"
+        x509_default: 720h    # 30 days
+        x509_max: 17520h      # 2 years
+        x509_min: 5m
+      loop: "{{ step_provisioners }}"
+      loop_control:
+        label: "{{ item.name }}"
+      notify: Reload step-ca
+      register: policy
+
+    - name: Show which claims were reconciled
+      ansible.builtin.debug:
+        msg: "{{ item.item.name }}: {{ item.updated | join(', ') }}"
+      loop: "{{ policy.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when: item.updated is defined
+
+    # Nothing above needs the CA to be running: in this mode the module reads
+    # ca.json, the same file it writes. A second run before the reload is
+    # correctly a no-op.
+    - name: Confirm a repeat run changes nothing
+      matonb.step.provisioner:
+        ca_path: "{{ step_ca_path }}"
+        name: "{{ step_provisioners[0].name }}"
+        run_as: "{{ step_ca_user }}"
+        x509_default: 720h
+        x509_max: 17520h
+        x509_min: 5m
+      check_mode: true
+      register: repeat
+
+    - name: The policy has converged
+      ansible.builtin.assert:
+        that: repeat is not changed
+        fail_msg: "Expected the declared durations to already be in place"
