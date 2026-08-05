@@ -20,6 +20,12 @@ Modify Step CA configuration JSON file (ca.json). Supports top-level parameters 
 
 **Note**: Step CA must be restarted after configuration changes.
 
+The file is only rewritten when a requested setting differs from what it already
+holds, so `changed` is accurate and a `notify` handler fires only on a real
+change. Durations are compared as durations rather than as text — step
+renormalises `8760h` to `8760h0m0s` when it rewrites `ca.json`, and that is not
+treated as a change. Settings this module does not manage are left untouched.
+
 ### Parameters
 
 | Parameter                   | Type   | Required | Default | Description                               |
@@ -29,7 +35,7 @@ Modify Step CA configuration JSON file (ca.json). Supports top-level parameters 
 | `crt`                       | path   | no       |         | Path to certificate file                  |
 | `db_datasource`             | string | no       |         | Database datasource string                |
 | `default_tls_cert_duration` | string | no       |         | Default TLS cert duration (e.g., "720h")  |
-| `json_path`                 | path   | yes      |         | Path to the ca.json configuration file    |
+| `json_path`                 | string | yes      |         | Path to the ca.json configuration file    |
 | `key`                       | path   | no       |         | Path to key file                          |
 | `max_tls_cert_duration`     | string | no       |         | Maximum TLS cert duration (e.g., "8760h") |
 | `min_tls_cert_duration`     | string | no       |         | Minimum TLS cert duration (e.g., "5m")    |
