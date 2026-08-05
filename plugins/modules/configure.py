@@ -15,10 +15,18 @@ description:
     become the CA-wide defaults inherited by provisioners that do not set
     their own.
   - step-ca must be restarted or sent SIGHUP for changes to take effect.
-notes:
   - >-
-    This module always reports C(changed) as true, even when the requested
-    settings already match the file.
+    The file is only rewritten when a requested setting differs from what it
+    already holds, so C(changed) is accurate and a C(notify) handler fires only
+    on a real change. Settings this module does not manage are left untouched.
+  - >-
+    Durations are compared as durations rather than as text, because step
+    renormalises them when it rewrites C(ca.json): a claim set here as C(8760h)
+    is written back as C(8760h0m0s). The two mean the same thing and are not
+    treated as a change.
+  - >-
+    Supports check mode. Under C(--check) the resulting configuration is
+    computed and returned, and C(changed) is predicted, but nothing is written.
 options:
   ca_config:
     description:
@@ -103,12 +111,12 @@ EXAMPLES = r"""
 
 RETURN = r"""
 changed:
-  description: Always true when the module runs to completion.
+  description: Whether the file had to be rewritten.
   returned: success
   type: bool
 
 msg:
-  description: Confirmation that the file was written.
+  description: Whether the file was written or already held the requested settings.
   returned: success
   type: str
 
@@ -118,12 +126,26 @@ new_data:
   type: dict
 """
 
+import copy
 import json
 import os
 
 from ansible.module_utils.basic import AnsibleModule
 
+from ansible_collections.matonb.step.plugins.module_utils.utils import parse_duration
+
 ENCODING = "utf-8"
+
+# Options written to the top level of ca.json, unchanged.
+TOP_LEVEL_KEYS = ("ca_config", "ca_path", "crt", "db_datasource", "key", "root")
+
+# Options written under authority.claims, where they become the CA-wide
+# defaults inherited by provisioners that do not set their own.
+CLAIM_KEYS = {
+    "default_tls_cert_duration": "defaultTLSCertDuration",
+    "max_tls_cert_duration": "maxTLSCertDuration",
+    "min_tls_cert_duration": "minTLSCertDuration",
+}
 
 
 def load_json_file(json_path):
@@ -148,9 +170,73 @@ def save_json_file(json_path, data):
     return {"success": True}
 
 
-def main():
-    """Run the Ansible module."""
-    module_args = {
+def _already_expresses(stored, wanted_nanoseconds):
+    """Whether a stored claim already means the requested duration.
+
+    Args:
+        stored: The value currently in the file.
+        wanted_nanoseconds: The requested duration, already parsed.
+
+    Returns:
+        bool: True if the two are the same duration. A stored value that
+        cannot be parsed is treated as different, so it gets corrected.
+    """
+    try:
+        return parse_duration(str(stored)) == wanted_nanoseconds
+    except ValueError:
+        return False
+
+
+def apply_updates(config, params):
+    """Apply the requested settings to a copy of the configuration.
+
+    Returning a new object rather than mutating in place is what lets the
+    caller compare before and after, and so report C(changed) accurately.
+
+    Args:
+        config: The configuration as read from disk.
+        params: The module parameters.
+
+    Returns:
+        dict: The configuration with the requested settings applied.
+
+    Raises:
+        ValueError: If a requested duration cannot be parsed.
+    """
+    updated = copy.deepcopy(config)
+    updated.update({key: params[key] for key in TOP_LEVEL_KEYS if params[key] is not None})
+
+    requested = {key: params[key] for key in CLAIM_KEYS if params[key] is not None}
+    if not requested:
+        return updated
+
+    claims = updated.setdefault("authority", {}).setdefault("claims", {})
+    for key, value in requested.items():
+        try:
+            wanted = parse_duration(value)
+        except ValueError as exc:
+            raise ValueError(f"Invalid value for '{key}': {exc}") from exc
+
+        claim = CLAIM_KEYS[key]
+        # Durations are compared as durations, not as text. step renormalises
+        # what it writes - a claim set here as 8760h comes back as 8760h0m0s
+        # once step has rewritten ca.json - and rewriting that to the requested
+        # spelling would report changed on every run and restart the CA with
+        # it, while meaning exactly the same thing.
+        if claim in claims and _already_expresses(claims[claim], wanted):
+            continue
+        claims[claim] = value
+
+    return updated
+
+
+def get_argument_spec():
+    """Return the argument spec for the configure module.
+
+    Returns:
+        dict: The module's argument specification.
+    """
+    return {
         "ca_config": {"type": "path", "required": False, "default": None},
         "ca_path": {"type": "path", "required": False, "default": None},
         "crt": {"type": "path", "required": False, "default": None},
@@ -163,47 +249,37 @@ def main():
         "root": {"type": "path", "required": False, "default": None},
     }
 
-    module = AnsibleModule(argument_spec=module_args, supports_check_mode=True)
+
+def main():
+    """Run the Ansible module."""
+    module = AnsibleModule(argument_spec=get_argument_spec(), supports_check_mode=True)
 
     json_path = module.params["json_path"]
-
-    # Top-level parameters
-    top_level_keys = ["ca_config", "ca_path", "crt", "db_datasource", "key", "root"]
-    updates = {key: module.params[key] for key in top_level_keys if module.params[key] is not None}
-
-    # Claims parameters (nested under authority.claims)
-    claims_map = {
-        "max_tls_cert_duration": "maxTLSCertDuration",
-        "default_tls_cert_duration": "defaultTLSCertDuration",
-        "min_tls_cert_duration": "minTLSCertDuration",
-    }
-    claims_updates = {claims_map[key]: module.params[key] for key in claims_map if module.params[key] is not None}
 
     json_data = load_json_file(json_path)
 
     if "error" in json_data:
         module.fail_json(msg=json_data["error"])
 
-    # Apply top-level updates
-    json_data.update(updates)
+    try:
+        new_data = apply_updates(json_data, module.params)
+    except ValueError as exc:
+        module.fail_json(msg=str(exc))
 
-    # Apply claims updates under authority.claims
-    if claims_updates:
-        if "authority" not in json_data:
-            json_data["authority"] = {}
-        if "claims" not in json_data["authority"]:
-            json_data["authority"]["claims"] = {}
-        json_data["authority"]["claims"].update(claims_updates)
+    # Rewriting a file that already says the right thing would report changed
+    # on every run, and any notify handler would restart the CA with it.
+    if new_data == json_data:
+        module.exit_json(changed=False, msg="Configuration already up to date", new_data=new_data)
 
     if module.check_mode:
-        module.exit_json(changed=True, new_data=json_data)
+        module.exit_json(changed=True, msg="Configuration would be updated", new_data=new_data)
 
-    result = save_json_file(json_path, json_data)
+    result = save_json_file(json_path, new_data)
 
     if "error" in result:
         module.fail_json(msg=result["error"])
 
-    module.exit_json(changed=True, msg="JSON file updated", new_data=json_data)
+    module.exit_json(changed=True, msg="JSON file updated", new_data=new_data)
 
 
 if __name__ == "__main__":

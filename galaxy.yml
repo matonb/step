@@ -50,7 +50,10 @@ tags:
 
 # Collections that this one depends on, in the format
 # 'namespace.name': 'version'
-dependencies: {}
+# community.general supplies community.general.capabilities, used by the
+# ca_server role to grant step-ca CAP_NET_BIND_SERVICE.
+dependencies:
+  community.general: '>=1.0.0'
 
 # Metadata URLs (optional but helpful)
 repository: https://github.com/matonb/step
