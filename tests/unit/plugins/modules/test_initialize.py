@@ -2,12 +2,20 @@
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 """Tests for building the `step ca init` command and its option guards."""
 
+import json
+import os
+import subprocess
+import sys
+
 import pytest
 
+from ansible_collections.matonb.step.plugins.modules import initialize
 from ansible_collections.matonb.step.plugins.modules.initialize import (
+    CA_FILE_NAMES,
     build_initialize_command,
-    check_existing_ca_files,
+    find_existing_ca_files,
     get_argument_spec,
+    remove_ca_files,
     validate_admin_options,
 )
 
@@ -117,20 +125,202 @@ class TestArgumentSpec:
         assert set(get_argument_spec()["deployment_type"]["choices"]) == {"hosted", "linked", "standalone"}
 
 
-class TestCheckExistingCaFiles:
-    def test_empty_directory_is_acceptable(self, tmp_path):
-        assert check_existing_ca_files(str(tmp_path)) is None
+def build_ca(tmp_path):
+    """Populate a directory with every file `step ca init` creates."""
+    for name in CA_FILE_NAMES:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"PRECIOUS-{name}", encoding="utf-8")
+    return [tmp_path / name for name in CA_FILE_NAMES]
+
+
+class TestFindExistingCaFiles:
+    """Detection must never delete. It used to, which is what caused #35."""
+
+    def test_an_empty_directory_holds_no_ca(self, tmp_path):
+        assert find_existing_ca_files(str(tmp_path)) == []
 
     def test_an_existing_ca_is_reported(self, tmp_path):
         (tmp_path / "config").mkdir()
         (tmp_path / "config" / "ca.json").write_text("{}")
-        message = check_existing_ca_files(str(tmp_path))
-        assert message is not None
-        assert "ca.json" in message
+        assert find_existing_ca_files(str(tmp_path)) == [str(tmp_path / "config" / "ca.json")]
 
-    def test_force_clears_the_way(self, tmp_path):
+    def test_a_complete_ca_reports_every_file(self, tmp_path):
+        build_ca(tmp_path)
+        assert find_existing_ca_files(str(tmp_path)) == [str(tmp_path / name) for name in CA_FILE_NAMES]
+
+    def test_detection_leaves_everything_in_place(self, tmp_path):
+        # The heart of #35: asking whether a CA exists must not destroy it.
+        files = build_ca(tmp_path)
+        find_existing_ca_files(str(tmp_path))
+        assert all(path.exists() for path in files)
+
+    def test_the_file_list_is_the_one_step_creates(self):
+        # Asserted as literals: every other test here takes the names from
+        # CA_FILE_NAMES, so dropping the root key from it would go unnoticed
+        # and force would silently stop removing it.
+        assert CA_FILE_NAMES == (
+            "certs/intermediate_ca.crt",
+            "certs/root_ca.crt",
+            "config/ca.json",
+            "config/defaults.json",
+            "secrets/intermediate_ca_key",
+            "secrets/root_ca_key",
+        )
+
+
+class TestRemoveCaFiles:
+    def test_every_file_is_removed(self, tmp_path):
+        files = build_ca(tmp_path)
+        remove_ca_files(str(tmp_path))
+        assert not [path for path in files if path.exists()]
+
+    def test_a_partial_ca_is_not_an_error(self, tmp_path):
         (tmp_path / "config").mkdir()
-        target = tmp_path / "config" / "ca.json"
-        target.write_text("{}")
-        assert check_existing_ca_files(str(tmp_path), force=True) is None
-        assert not target.exists()
+        (tmp_path / "config" / "ca.json").write_text("{}")
+        remove_ca_files(str(tmp_path))
+        assert find_existing_ca_files(str(tmp_path)) == []
+
+
+def stub_step_binary(tmp_path):
+    """Put a `step` on PATH that always fails, and return the env to use.
+
+    Without this, a test that reaches the real `step ca init` behaves
+    differently on every host: absent in CI, refusing for want of a terminal
+    under a pipe, and - for a developer running pytest in their own shell -
+    opening /dev/tty to prompt for DNS names, which blocks until the command
+    timeout. It also couples the assertion to step continuing to refuse to run
+    non-interactively.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub = bin_dir / "step"
+    stub.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    stub.chmod(0o755)
+    return {"PATH": os.pathsep.join([str(bin_dir), os.environ.get("PATH", "")])}
+
+
+def run_module(step_path, password_file, extra_env=None, **requested):
+    """Execute the module the way Ansible does and return its result.
+
+    Driving main() is the only way to catch #35: the defect was purely the
+    order of two calls, so every test of the functions themselves passed with
+    it in place.
+    """
+    args = json.dumps(
+        {
+            "ANSIBLE_MODULE_ARGS": {
+                "name": "Test CA",
+                "path": str(step_path),
+                "password_file": str(password_file),
+                "provisioner_password_file": str(password_file),
+                **requested,
+            }
+        }
+    )
+    collection_paths = [path for path in sys.path if path and os.path.isdir(os.path.join(path, "ansible_collections"))]
+    completed = subprocess.run(
+        [sys.executable, initialize.__file__],
+        input=args,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join(collection_paths), **(extra_env or {})},
+    )
+    if not completed.stdout:
+        raise AssertionError(f"module produced no result (exit {completed.returncode}):\n{completed.stderr}")
+    return json.loads(completed.stdout)
+
+
+class TestCheckModeNeverDeletes:
+    """Regression tests for #35.
+
+    `check_existing_ca_files()` both detected and deleted, and ran before the
+    check-mode guard, so `--check` with `force: true` unlinked the CA's private
+    keys and then reported what it "would" do. The root CA key cannot be
+    regenerated.
+    """
+
+    def test_check_mode_with_force_leaves_an_existing_ca_intact(self, tmp_path):
+        ca = tmp_path / "ca"
+        ca.mkdir()
+        files = build_ca(ca)
+        password_file = tmp_path / "pw"
+        password_file.write_text("pw", encoding="utf-8")
+
+        result = run_module(ca, password_file, force=True, _ansible_check_mode=True)
+
+        assert result["changed"] is True
+        assert [path.name for path in files if not path.exists()] == []
+        assert all(path.read_text(encoding="utf-8").startswith("PRECIOUS-") for path in files)
+
+    def test_check_mode_with_force_says_it_would_delete(self, tmp_path):
+        # Reporting `changed` is not enough: an operator running --check to find
+        # out what force does needs to be told the CA goes away.
+        ca = tmp_path / "ca"
+        ca.mkdir()
+        build_ca(ca)
+        password_file = tmp_path / "pw"
+        password_file.write_text("pw", encoding="utf-8")
+
+        result = run_module(ca, password_file, force=True, _ansible_check_mode=True)
+
+        assert "deleted" in result["msg"]
+
+    def test_check_mode_without_force_still_refuses_and_deletes_nothing(self, tmp_path):
+        ca = tmp_path / "ca"
+        ca.mkdir()
+        files = build_ca(ca)
+        password_file = tmp_path / "pw"
+        password_file.write_text("pw", encoding="utf-8")
+
+        result = run_module(ca, password_file, _ansible_check_mode=True)
+
+        assert "cannot continue" in result["msg"]
+        assert all(path.exists() for path in files)
+
+    def test_check_mode_on_an_empty_directory_creates_nothing(self, tmp_path):
+        ca = tmp_path / "ca"
+        ca.mkdir()
+        password_file = tmp_path / "pw"
+        password_file.write_text("pw", encoding="utf-8")
+
+        result = run_module(ca, password_file, _ansible_check_mode=True)
+
+        assert result["changed"] is True
+        assert list(ca.iterdir()) == []
+
+
+class TestForceOutsideCheckMode:
+    def test_force_still_removes_an_existing_ca(self, tmp_path):
+        # The other half of the fix: moving the deletion below the check-mode
+        # guard must not stop it happening on a real run. The stubbed step
+        # fails, so nothing is recreated and the deletion is observable.
+        ca = tmp_path / "ca"
+        ca.mkdir()
+        files = build_ca(ca)
+        password_file = tmp_path / "pw"
+        password_file.write_text("pw", encoding="utf-8")
+
+        result = run_module(ca, password_file, force=True, extra_env=stub_step_binary(tmp_path))
+
+        assert result["failed"] is True
+        assert [path for path in files if path.exists()] == []
+
+    def test_without_force_a_real_run_refuses_and_deletes_nothing(self, tmp_path):
+        # The production path. Check mode is covered above; if the guard on the
+        # no-force branch were weakened, only this test would notice - and this
+        # is the run that would actually overwrite a CA nobody asked to replace.
+        ca = tmp_path / "ca"
+        ca.mkdir()
+        files = build_ca(ca)
+        password_file = tmp_path / "pw"
+        password_file.write_text("pw", encoding="utf-8")
+
+        result = run_module(ca, password_file, extra_env=stub_step_binary(tmp_path))
+
+        # The message matters, not just the failure: with the guard removed the
+        # module reaches step, which also fails, so asserting `failed` alone
+        # passes either way and proves nothing.
+        assert "cannot continue" in result["msg"]
+        assert all(path.read_text(encoding="utf-8").startswith("PRECIOUS-") for path in files)

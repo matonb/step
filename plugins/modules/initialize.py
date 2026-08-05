@@ -80,6 +80,11 @@ options:
     description:
       - Replace any existing certificates, secrets and configuration found at I(path).
       - Without this the module fails rather than overwrite an existing CA.
+      - >-
+        This deletes C(secrets/root_ca_key), which cannot be regenerated:
+        everything the old CA issued becomes unverifiable and the trust chain
+        has to be rebuilt from scratch. Nothing is backed up. Under C(--check)
+        the deletion is reported but not performed.
     required: false
     type: bool
     default: false
@@ -254,13 +259,24 @@ management_mode:
 import os
 import pathlib
 import re
-from typing import Any, Optional
+from typing import Any
 
 from ansible.module_utils.basic import AnsibleModule
 
 from ansible_collections.matonb.step.plugins.module_utils.process import (
     CommandTimeoutError,
     run_command,
+)
+
+# The files `step ca init` creates. Their presence is what makes a directory an
+# initialised CA, and what `force` deletes.
+CA_FILE_NAMES = (
+    "certs/intermediate_ca.crt",
+    "certs/root_ca.crt",
+    "config/ca.json",
+    "config/defaults.json",
+    "secrets/intermediate_ca_key",
+    "secrets/root_ca_key",
 )
 
 
@@ -385,39 +401,46 @@ def build_initialize_command(params: dict[str, Any]) -> list[str]:
     return cmd
 
 
-def check_existing_ca_files(step_path: str, force: bool = False) -> Optional[str]:
-    """Check if CA files already exist and handle them based on the force parameter.
+def ca_file_paths(step_path: str) -> list[str]:
+    """Return the full paths of the files C(step ca init) creates.
 
     Args:
-        step_path: The path to the Step CA directory
-        force: Whether to force deletion of existing files
+        step_path: The path to the Step CA directory.
 
     Returns:
-        Optional[str]: Error message if files exist and force is False, None otherwise
+        List[str]: The paths, in a stable order.
     """
-    step_files = [
-        f"{step_path}/certs/intermediate_ca.crt",
-        f"{step_path}/certs/root_ca.crt",
-        f"{step_path}/config/ca.json",
-        f"{step_path}/config/defaults.json",
-        f"{step_path}/secrets/intermediate_ca_key",
-        f"{step_path}/secrets/root_ca_key",
-    ]
+    return [os.path.join(step_path, name) for name in CA_FILE_NAMES]
 
-    if force:
-        for file in step_files:
-            pathlib.Path(file).unlink(missing_ok=True)
-        return None
 
-    file_found = next((file for file in step_files if os.path.exists(file)), None)
-    if file_found:
-        return (
-            f"Found {file_found}, cannot continue.\n"
-            "Use force: true to override or ensure that none of the "
-            "following files exist:\n" + "\n".join(step_files)
-        )
+def find_existing_ca_files(step_path: str) -> list[str]:
+    """Report which of the CA's files are already present.
 
-    return None
+    Detection only. Deletion is :func:`remove_ca_files`, kept separate so that
+    the caller can decide - the two used to be one function, which meant asking
+    whether a CA existed destroyed it.
+
+    Args:
+        step_path: The path to the Step CA directory.
+
+    Returns:
+        List[str]: The paths that exist, empty if the directory holds no CA.
+    """
+    return [path for path in ca_file_paths(step_path) if os.path.exists(path)]
+
+
+def remove_ca_files(step_path: str) -> None:
+    """Delete the files C(step ca init) creates.
+
+    Irreversible: C(secrets/root_ca_key) cannot be regenerated, and everything
+    the CA ever issued becomes unverifiable without it. Only ever call this
+    when C(force) was asked for and the module is not in check mode.
+
+    Args:
+        step_path: The path to the Step CA directory.
+    """
+    for path in ca_file_paths(step_path):
+        pathlib.Path(path).unlink(missing_ok=True)
 
 
 def validate_admin_options(module: AnsibleModule) -> None:
@@ -494,19 +517,38 @@ def main() -> None:
     management_mode = "admin" if module.params.get("remote_management") else "config"
     admin_subject = module.params.get("admin_subject") or ("step" if management_mode == "admin" else None)
 
-    # Check for existing CA files
-    error_msg = check_existing_ca_files(step_path, force=module.params.get("force", False))
-    if error_msg:
-        module.fail_json(msg=error_msg)
+    existing = find_existing_ca_files(step_path)
+    if existing and not module.params["force"]:
+        module.fail_json(
+            msg=(
+                f"Found {existing[0]}, cannot continue.\n"
+                "Use force: true to override or ensure that none of the "
+                "following files exist:\n" + "\n".join(ca_file_paths(step_path))
+            )
+        )
 
-    # In check mode, report that changes would be made
+    # Nothing above this line modifies anything, and nothing below it may run
+    # under check mode: with force: true the next step deletes the CA's private
+    # keys. Detection and deletion used to be one call placed above this guard,
+    # so a --check run destroyed the CA and then reported what it "would" do.
     if module.check_mode:
         module.exit_json(
             changed=True,
-            msg="Check mode: Step CA would be initialized",
+            msg=(
+                "Check mode: the existing CA would be deleted and Step CA reinitialized"
+                if existing
+                else "Check mode: Step CA would be initialized"
+            ),
             admin_subject=admin_subject,
             management_mode=management_mode,
         )
+
+    # Keyed on force rather than on what was detected: find_existing_ca_files
+    # uses os.path.exists, which is False for a symlink whose target is gone,
+    # and step would then meet a directory it expected to be empty. Unreachable
+    # without force, because the fail_json above has already returned.
+    if module.params["force"]:
+        remove_ca_files(step_path)
 
     # Run step CA initialization
     try:
