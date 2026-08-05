@@ -39,7 +39,15 @@ CA loaded. That is what makes `restart_required` observable rather than merely
 asserted: the test checks the change is in `ca.json`, is **not** yet visible
 from the CA, and becomes visible after `SIGHUP`.
 
-## Two things worth knowing
+Every task runs **without reloading first**, which is the point. Add, re-add,
+reconcile a claim and remove all happen against a CA whose loaded configuration
+is stale, proving the module compares against `ca.json` — the file it writes —
+rather than against the CA. This is the regression test for
+[#31](https://github.com/matonb/step/issues/31); before the fix the second add
+failed with `provisioner with name acme already exists`. A single `SIGHUP` at
+the end confirms the CA converges on exactly what `ca.json` holds.
+
+## One thing worth knowing
 
 **`ca_config` has to be explicit against a containerised CA.** The container
 writes container-absolute paths into `config/defaults.json`:
@@ -51,10 +59,3 @@ writes container-absolute paths into `config/defaults.json`:
 The step CLI loads that file as its flag defaults, so a host-side run resolves
 paths that do not exist. This affects anyone managing a containerised CA from
 outside the container, not just these tests.
-
-**In config mode, `list` and `add` read different sources.** `list` queries the
-CA's *loaded* configuration over HTTP, while `add`/`remove` edit `ca.json`. Until
-step-ca reloads, the two disagree, so re-running a play before the reload will
-try to add a provisioner that is already in the file. This is why the module
-reports `restart_required`, and why real plays pair these tasks with
-`notify: restart step-ca`. The suite reloads after each change to mirror that.

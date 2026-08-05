@@ -23,6 +23,12 @@ description:
     other CA keeps its provisioners in C(ca.json), which is edited in place and
     requires the service to be restarted or sent SIGHUP.
   - >-
+    In config mode the existing provisioners are read from C(ca.json) rather
+    than from the CA, because that is the file being edited. This makes a task
+    idempotent before the service has reloaded, and means it does not need the
+    CA to be running, but it does require I(ca_path) or I(ca_config) so the file
+    can be found.
+  - >-
     Supports check mode. Under C(--check) the provisioner list is read and the
     resulting C(changed)/C(restart_required) values are predicted, but no
     provisioner is added, updated or removed and no password is generated.
@@ -70,6 +76,10 @@ options:
     description:
       - Path to the CA configuration file. Defaults to C(ca.json) under I(ca_path).
       - Also used to detect the management mode when I(management_mode) is C(auto).
+      - >-
+        Required unless I(ca_path) is set, or I(management_mode) is set to
+        C(admin). It is how C(ca.json) is located, both to detect the management
+        mode and to read the existing provisioners in config mode.
     required: false
     type: path
     version_added: "1.1.0"
@@ -77,6 +87,10 @@ options:
     description:
       - Optional path to the step CA configuration directory.
       - Sets the STEPPATH environment variable before executing step commands.
+      - >-
+        Required unless I(ca_config) is set, or I(management_mode) is set to
+        C(admin). It is how C(ca.json) is located, both to detect the management
+        mode and to read the existing provisioners in config mode.
     required: false
     type: path
   ca_url:
@@ -111,7 +125,9 @@ options:
     description:
       - Which management mode this task expects the CA to be in.
       - >-
-        C(auto) reads C(authority.enableAdmin) from the CA configuration.
+        C(auto) reads C(authority.enableAdmin) from the CA configuration, the
+        same field step-ca itself reads. It needs I(ca_path) or I(ca_config) to
+        find that file, and fails rather than picking a mode when it cannot.
         C(admin) and C(config) assert a mode rather than force one.
       - >-
         The step CLI always chooses the path itself, based on what the CA
@@ -430,6 +446,12 @@ def build_credentials(module: AnsibleModule) -> AdminCredentials:
 def resolve_mode(module: AnsibleModule, connection: StepConnection) -> ManagementMode:
     """Decide which management mode to use.
 
+    C(auto) reads C(authority.enableAdmin), the same field step-ca itself reads,
+    so it detects the mode rather than inferring it. When that field cannot be
+    reached the mode is genuinely unknown, and the task fails instead of picking
+    one: guessing C(config) against an admin-mode CA sends reads to the wrong
+    source and writes to a file the CA will never load.
+
     Args:
         module: The Ansible module instance.
         connection: The connection identifying the CA.
@@ -443,8 +465,13 @@ def resolve_mode(module: AnsibleModule, connection: StepConnection) -> Managemen
 
     mode, error = configured_mode(connection)
     if mode is None:
-        module.warn(f"Assuming '{ManagementMode.CONFIG.value}' management mode: {error}")
-        return ManagementMode.CONFIG
+        module.fail_json(
+            msg=(
+                f"Cannot determine the management mode: {error.rstrip('.')}. Either set 'ca_path' or 'ca_config' so "
+                "the CA configuration can be read, or set 'management_mode' to 'admin' or 'config' to "
+                "state it outright."
+            )
+        )
 
     return mode
 
@@ -627,14 +654,16 @@ def main() -> None:
             connection = replace(connection, admin=credentials)
 
         client = StepProvisionerClient(connection)
-        matched = match_provisioners(client.list(), name, provisioner_type)
+        matched = match_provisioners(client.list(mode), name, provisioner_type)
 
         apply = apply_absent if state == "absent" else apply_present
         fragment, effective_mode = apply(module, client, mode, matched)
 
-        # Report the state after the change rather than before it.
+        # Report the state after the change rather than before it, reading back
+        # from wherever step actually wrote: on a mode mismatch that is not the
+        # source the first read came from.
         if fragment["changed"] and not module.check_mode:
-            matched = match_provisioners(client.list(), name, provisioner_type)
+            matched = match_provisioners(client.list(effective_mode), name, provisioner_type)
 
         result = {
             "management_mode": effective_mode.value,

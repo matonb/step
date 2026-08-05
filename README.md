@@ -69,9 +69,11 @@ Modify Step CA configuration JSON file (ca.json). Supports top-level parameters 
 Creates, updates and removes provisioners. Works against both management modes —
 see [Management modes](#management-modes) below.
 
-> **The CA must be running.** `step ca provisioner list` reads the CA's
-> `/provisioners` HTTP endpoint, so this module needs a reachable, running
-> step-ca in *both* modes, not just admin mode.
+> **Admin mode needs a running CA; config mode does not.** In admin mode every
+> operation goes through the CA, so it must be reachable. In config mode the
+> module reads and writes `ca.json` directly, so provisioners can be configured
+> before step-ca is ever started — but `ca_path` or `ca_config` must be set so
+> the file can be found.
 
 ### Parameters
 
@@ -82,8 +84,8 @@ see [Management modes](#management-modes) below.
 | `admin_password_file` | path    | no       |           | File holding the password that decrypts `admin_provisioner`'s key. Required in admin mode               |
 | `admin_provisioner`   | string  | no       |           | Provisioner used to mint admin credentials. Required in admin mode                                      |
 | `admin_subject`       | string  | no       |           | Subject of the CA administrator (`step` by default). Required in admin mode                             |
-| `ca_config`           | path    | no       |           | Path to `ca.json`. Defaults to `config/ca.json` under `ca_path`                                         |
-| `ca_path`             | path    | no       |           | Optional path to the step CA configuration directory (sets STEPPATH)                                    |
+| `ca_config`           | path    | no\*     |           | Path to `ca.json`. Defaults to `config/ca.json` under `ca_path`                                         |
+| `ca_path`             | path    | no\*     |           | Path to the step CA configuration directory (sets STEPPATH)                                             |
 | `ca_url`              | string  | no       |           | Optional URL of the step CA. Falls back to the CA's `defaults.json`                                     |
 | `context`             | string  | no       |           | Optional step context name to operate in                                                                |
 | `debug`               | boolean | no       | `false`   | If true, prints CLI commands to stderr before execution                                                 |
@@ -98,6 +100,10 @@ see [Management modes](#management-modes) below.
 | `x509_default`        | string  | no       |           | Default certificate duration for X509 certificates                                                      |
 | `x509_max`            | string  | no       |           | Maximum certificate duration for X509 certificates                                                      |
 | `x509_min`            | string  | no       |           | Minimum certificate duration for X509 certificates                                                      |
+
+\* One of `ca_path` or `ca_config` is required, unless `management_mode` is set
+to `admin`. They locate `ca.json`, which is both how the management mode is
+detected and, in config mode, where the existing provisioners are read from.
 
 The `x509_*` options have no default. A claim that is left unset is inherited
 from the CA's own defaults and is not reconciled; a claim that is set is kept at
@@ -115,7 +121,10 @@ by probing the CA rather than by taking a flag.
 
 A CA is in admin mode when it was initialised with `remote_management: true`,
 which sets `authority.enableAdmin` in `ca.json`. With `management_mode: auto`
-(the default) the module reads that setting and follows it.
+(the default) the module reads that setting and follows it — the same field
+step-ca itself reads, so this detects the mode rather than inferring it. If
+`ca.json` cannot be found or read, the mode is genuinely unknown and the task
+fails rather than picking one; set `management_mode` explicitly in that case.
 
 Admin API changes take effect immediately, so `restart_required` is `false` in
 admin mode. In config mode the file is edited in place and step-ca must be
@@ -186,6 +195,27 @@ Three behaviours changed for existing config-mode users:
 callback logs. Set `no_log: true` on the task, or supply `password` yourself, if
 that matters to you.
 
+### Upgrading from 1.1.x
+
+**`ca_path` or `ca_config` is now required, unless you set
+`management_mode: admin`.** Two things that used to work by reaching the CA over
+HTTP now need `ca.json`: detecting the management mode, and reading the existing
+provisioners in config mode. A task that set neither previously carried on with
+a warning and an assumed mode; it now fails with a message naming both remedies.
+So does a task whose `ca_path` does not actually contain `config/ca.json` — the
+containerised case, where `defaults.json` points `ca-config` somewhere else — or
+whose `ca.json` the module cannot read because it runs without `become`.
+
+This closes a real bug ([#31](https://github.com/matonb/step/issues/31)): in
+config mode the module read provisioners from the CA's *loaded* configuration
+while writing them to `ca.json`, so re-running a play before step-ca had been
+reloaded failed with `provisioner with name acme already exists`. Reading the
+file it writes makes a single run converge — and means config-mode tasks no
+longer need the CA to be running at all.
+
+Add `ca_path: /etc/step-ca` to affected tasks, or `management_mode: admin` if
+the CA is reached only by `ca_url`.
+
 ### Deprecations
 
 | Option        | Status                                                                                             |
@@ -246,18 +276,21 @@ X509 duration parameters accept time units as follows:
 
 ## Examples
 
+Complete, runnable playbooks live in [`examples/`](examples/).
+
 ### Create a new JWK provisioner
 
 ```yaml
 - name: Create JWK provisioner
   matonb.step.provisioner:
+    ca_path: /etc/step-ca
     name: my-jwk-provisioner
-    type: JWK
-    state: present
     run_as: step # Run as step user for proper CA access
-    x509_min_dur: 30m
-    x509_max_dur: 48h
-    x509_default_dur: 24h
+    state: present
+    type: JWK
+    x509_default: 24h
+    x509_max: 48h
+    x509_min: 30m
   become: true # Required when using run_as
   register: provisioner_result
 
@@ -268,15 +301,19 @@ X509 duration parameters accept time units as follows:
   become: true
   when: provisioner_result.restart_required | bool
 ```
+
+Prefer `notify:` and a handler over a `when:` guard on every task — a play that
+adds several provisioners then reloads once, at the end.
 
 ### Remove a provisioner
 
 ```yaml
 - name: Remove provisioner
   matonb.step.provisioner:
+    ca_path: /etc/step-ca
     name: old-provisioner
-    state: absent
     run_as: step
+    state: absent
   become: true # Required when using run_as
   register: provisioner_result
 
@@ -288,42 +325,38 @@ X509 duration parameters accept time units as follows:
   when: provisioner_result.restart_required | bool
 ```
 
-### Check if a provisioner exists
+`state: absent` works for provisioners of any type, including ones this module
+cannot create.
+
+### Check whether a provisioner exists
+
+There is no read-only mode: `state: present` needs `type` so it knows what to
+create if the provisioner is missing. Use check mode, which predicts the change
+without making it — `changed` is `false` when the provisioner already matches.
 
 ```yaml
-- name: Check if provisioner exists
+- name: Check whether the provisioner exists
   matonb.step.provisioner:
+    ca_path: /etc/step-ca
     name: my-provisioner
     run_as: step
+    type: JWK
   become: true # Required when using run_as
+  check_mode: true
   register: provisioner_check
 
 - name: Display result
   ansible.builtin.debug:
-    msg: "Provisioner {{ 'exists' if provisioner_check.provisioners else 'does not exist' }}"
+    msg: "Provisioner {{ 'is missing' if provisioner_check.changed else 'exists' }}"
 ```
 
-### Specifying an alternate path
+`provisioner_check.provisioners` carries the matching provisioner's full
+configuration when one was found.
 
-```yaml
-- name: Create provisioner with specific CA path
-  matonb.step.provisioner:
-    name: new-provisioner
-    type: JWK
-    run_as: step
-    ca_path: /etc/step-ca
-    x509_min_dur: 15m
-    x509_max_dur: 96h
-  become: true # Required when using run_as
-  register: provisioner_result
-
-- name: Restart step-ca service if needed
-  ansible.builtin.service:
-    name: step-ca
-    state: restarted
-  become: true
-  when: provisioner_result.restart_required | bool
-```
+`type` also narrows the match, so this asks whether a **JWK** named
+`my-provisioner` exists. A provisioner of that name but another type reports as
+missing — and a non-check run of the same task would then try to create it, which
+step refuses.
 
 ## Special Notes
 

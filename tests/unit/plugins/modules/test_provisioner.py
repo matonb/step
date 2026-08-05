@@ -171,10 +171,29 @@ class TestResolveMode:
         module = FakeModule(name="acme", management_mode="admin")
         assert resolve_mode(module, _connection(module)) is ManagementMode.ADMIN
 
-    def test_auto_falls_back_to_config_with_a_warning(self):
+    def test_explicit_admin_mode_needs_no_ca_json(self):
+        # The way out for anyone reaching the CA by ca_url alone.
+        module = FakeModule(name="acme", management_mode="admin", ca_url="https://ca.example.com")
+        assert resolve_mode(module, _connection(module)) is ManagementMode.ADMIN
+
+    def test_auto_reads_enable_admin(self, tmp_path):
+        config_file = tmp_path / "ca.json"
+        config_file.write_text('{"authority": {"enableAdmin": true}}', encoding="utf-8")
+        module = FakeModule(name="acme", management_mode="auto", ca_config=str(config_file))
+        assert resolve_mode(module, _connection(module)) is ManagementMode.ADMIN
+
+    def test_auto_fails_rather_than_guessing_a_mode(self):
+        # Assuming 'config' against an admin CA reads the wrong source and
+        # writes a file the running CA will never load.
         module = FakeModule(name="acme", management_mode="auto")
-        assert resolve_mode(module, _connection(module)) is ManagementMode.CONFIG
-        assert module.warnings
+        with pytest.raises(ModuleFailedError, match="Cannot determine the management mode"):
+            resolve_mode(module, _connection(module))
+        assert module.warnings == []
+
+    def test_the_failure_names_both_ways_out(self, tmp_path):
+        module = FakeModule(name="acme", management_mode="auto", ca_path=str(tmp_path / "absent"))
+        with pytest.raises(ModuleFailedError, match=r"'ca_path'.*'management_mode'"):
+            resolve_mode(module, _connection(module))
 
 
 class TestBuildCredentials:

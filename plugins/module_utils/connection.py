@@ -26,7 +26,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from subprocess import CompletedProcess
-from typing import Optional
+from typing import Any, Optional
 
 from .process import run_command
 from .utils import read_json_file
@@ -246,6 +246,55 @@ class StepConnection:
         )
 
 
+def read_authority(config: Any, config_file: str) -> tuple[dict, Optional[str]]:
+    """Extract the C(authority) block from a parsed C(ca.json).
+
+    A file with no C(authority) block reads as empty; a file whose shape is
+    wrong is an error. Keeping those apart matters, because "nothing is
+    configured" and "this is not the file you think it is" would otherwise look
+    identical to a caller - and the first would silently reconfigure the CA.
+
+    Args:
+        config: Whatever :func:`read_json_file` returned for C(config_file).
+        config_file: The path, used only to build the error message.
+
+    Returns:
+        Tuple of the authority block (empty if absent) and an error (or None).
+    """
+    if not isinstance(config, dict):
+        return {}, f"'{config_file}' does not hold a JSON object"
+
+    authority = config.get("authority") or {}
+    if not isinstance(authority, dict):
+        return {}, f"the 'authority' entry in '{config_file}' is not a JSON object"
+
+    return authority, None
+
+
+def read_provisioners(config: Any, config_file: str) -> tuple[list, Optional[str]]:
+    """Extract C(authority.provisioners) from a parsed C(ca.json).
+
+    Args:
+        config: Whatever :func:`read_json_file` returned for C(config_file).
+        config_file: The path, used only to build the error message.
+
+    Returns:
+        Tuple of the provisioner entries (empty if absent) and an error
+        (or None).
+    """
+    authority, error = read_authority(config, config_file)
+    if error:
+        return [], error
+
+    provisioners = authority.get("provisioners") or []
+    if not isinstance(provisioners, list):
+        return [], f"the 'authority.provisioners' entry in '{config_file}' is not a list"
+    if not all(isinstance(item, dict) for item in provisioners):
+        return [], f"'authority.provisioners' in '{config_file}' holds an entry that is not a JSON object"
+
+    return provisioners, None
+
+
 def configured_mode(connection: StepConnection) -> tuple[Optional[ManagementMode], Optional[str]]:
     """Determine the management mode from the CA's own configuration.
 
@@ -260,14 +309,17 @@ def configured_mode(connection: StepConnection) -> tuple[Optional[ManagementMode
     """
     config_file = connection.config_file()
     if not config_file:
-        return None, "Cannot determine the management mode without 'ca_path' or 'ca_config'."
+        return None, "neither 'ca_path' nor 'ca_config' is set, so ca.json cannot be located"
 
     config, error = read_json_file(config_file)
     if error:
         return None, error
 
-    enabled = config.get("authority", {}).get("enableAdmin", False)
-    return (ManagementMode.ADMIN if enabled else ManagementMode.CONFIG), None
+    authority, error = read_authority(config, config_file)
+    if error:
+        return None, error
+
+    return (ManagementMode.ADMIN if authority.get("enableAdmin", False) else ManagementMode.CONFIG), None
 
 
 def observed_mode(result: CompletedProcess) -> ManagementMode:
