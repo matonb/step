@@ -27,7 +27,24 @@ description:
   - >-
     Supports check mode. Under C(--check) the resulting configuration is
     computed and returned, and C(changed) is predicted, but nothing is written.
+  - >-
+    The file is replaced atomically: the new contents are written alongside it,
+    flushed to disk, and moved into place in one step, so a failed or
+    interrupted write leaves the original exactly as it was rather than
+    truncated. An existing file keeps its mode and ownership; ownership is only
+    preserved when the module runs privileged enough to set it.
+  - >-
+    A symlinked I(json_path) is followed, so the file it names is updated and
+    the link is left alone.
 options:
+  backup:
+    description:
+      - Copy the existing file, with a timestamp, before overwriting it.
+      - The path of the copy is returned as I(backup_file).
+    required: false
+    type: bool
+    default: false
+    version_added: "1.2.0"
   ca_config:
     description:
       - Path to the CA configuration file, written to the top level of C(ca.json).
@@ -38,6 +55,20 @@ options:
       - Path to the CA directory, written to the top level of C(ca.json).
     required: false
     type: path
+  create:
+    description:
+      - Write a new configuration file when I(json_path) does not exist.
+      - >-
+        Off by default, so a mistyped path fails instead of silently producing
+        a new, nearly empty configuration while the real CA is left untouched.
+      - >-
+        A file created this way takes the running user's umask and ownership;
+        this module sets neither. Use C(ansible.builtin.file) afterwards if it
+        needs specific permissions.
+    required: false
+    type: bool
+    default: false
+    version_added: "1.2.0"
   crt:
     description:
       - Path to the intermediate certificate, written to the top level of C(ca.json).
@@ -57,8 +88,9 @@ options:
   json_path:
     description:
       - Path to the C(ca.json) configuration file to modify.
+      - Must already exist unless I(create) is set.
     required: true
-    type: str
+    type: path
   key:
     description:
       - Path to the intermediate private key, written to the top level of C(ca.json).
@@ -110,6 +142,12 @@ EXAMPLES = r"""
 """
 
 RETURN = r"""
+backup_file:
+  description: Path to the copy taken before the file was overwritten.
+  returned: when I(backup) is true and the file existed and was changed
+  type: str
+  sample: /etc/step-ca/config/ca.json.42.2026-08-05@18:22:14~
+
 changed:
   description: Whether the file had to be rewritten.
   returned: success
@@ -127,14 +165,15 @@ new_data:
 """
 
 import copy
-import json
 import os
 
 from ansible.module_utils.basic import AnsibleModule
 
-from ansible_collections.matonb.step.plugins.module_utils.utils import parse_duration
-
-ENCODING = "utf-8"
+from ansible_collections.matonb.step.plugins.module_utils.utils import (
+    parse_duration,
+    read_json_file,
+    save_json_file,
+)
 
 # Options written to the top level of ca.json, unchanged.
 TOP_LEVEL_KEYS = ("ca_config", "ca_path", "crt", "db_datasource", "key", "root")
@@ -148,26 +187,43 @@ CLAIM_KEYS = {
 }
 
 
-def load_json_file(json_path):
-    """Load JSON data from a file."""
+def load_configuration(module, json_path):
+    """Read the configuration to be updated.
+
+    A file that is simply not there is only acceptable when the task asked for
+    it to be created. Treating a missing file as an empty one means a mistyped
+    path writes a brand new, nearly empty configuration and reports success
+    while the real CA is untouched.
+
+    Args:
+        module: The Ansible module instance, used to fail.
+        json_path: Path to the configuration file.
+
+    Returns:
+        dict: The parsed configuration, empty if it is being created.
+    """
     if not os.path.exists(json_path):
+        if not module.params["create"]:
+            module.fail_json(
+                msg=(
+                    f"'{json_path}' does not exist. Check the path, or set 'create: true' to write a "
+                    "new configuration file there."
+                )
+            )
         return {}
 
-    try:
-        with open(json_path, encoding=ENCODING) as file:
-            return json.load(file)
-    except (OSError, json.JSONDecodeError) as error:
-        return {"error": f"Failed to load JSON file: {str(error)}"}
+    config, error = read_json_file(json_path)
+    if error:
+        module.fail_json(msg=f"Failed to load JSON file: {error}")
+    if not isinstance(config, dict):
+        module.fail_json(msg=f"'{json_path}' does not hold a JSON object.")
+    # Checked one level down as well, because that is where the claims go: an
+    # authority holding anything but an object reaches setdefault() and
+    # surfaces as an AttributeError traceback rather than something to act on.
+    if not isinstance(config.get("authority", {}), dict):
+        module.fail_json(msg=f"The 'authority' entry in '{json_path}' is not a JSON object.")
 
-
-def save_json_file(json_path, data):
-    """Save JSON data to a file."""
-    try:
-        with open(json_path, "w", encoding=ENCODING) as file:
-            json.dump(data, file, indent=4)
-    except OSError as error:
-        return {"error": f"Failed to write JSON file: {str(error)}"}
-    return {"success": True}
+    return config
 
 
 def _already_expresses(stored, wanted_nanoseconds):
@@ -237,12 +293,14 @@ def get_argument_spec():
         dict: The module's argument specification.
     """
     return {
+        "backup": {"type": "bool", "required": False, "default": False},
         "ca_config": {"type": "path", "required": False, "default": None},
         "ca_path": {"type": "path", "required": False, "default": None},
+        "create": {"type": "bool", "required": False, "default": False},
         "crt": {"type": "path", "required": False, "default": None},
         "db_datasource": {"type": "str", "required": False, "default": None},
         "default_tls_cert_duration": {"type": "str", "required": False, "default": None},
-        "json_path": {"type": "str", "required": True},
+        "json_path": {"type": "path", "required": True},
         "key": {"type": "path", "required": False, "default": None},
         "max_tls_cert_duration": {"type": "str", "required": False, "default": None},
         "min_tls_cert_duration": {"type": "str", "required": False, "default": None},
@@ -256,10 +314,7 @@ def main():
 
     json_path = module.params["json_path"]
 
-    json_data = load_json_file(json_path)
-
-    if "error" in json_data:
-        module.fail_json(msg=json_data["error"])
+    json_data = load_configuration(module, json_path)
 
     try:
         new_data = apply_updates(json_data, module.params)
@@ -274,12 +329,24 @@ def main():
     if module.check_mode:
         module.exit_json(changed=True, msg="Configuration would be updated", new_data=new_data)
 
-    result = save_json_file(json_path, new_data)
+    result = {"changed": True, "msg": "JSON file updated", "new_data": new_data}
 
-    if "error" in result:
-        module.fail_json(msg=result["error"])
+    if module.params["backup"] and os.path.exists(json_path):
+        try:
+            result["backup_file"] = module.backup_local(json_path)
+        except Exception as exc:
+            # backup_local raises rather than returning, so without this an
+            # unwritable directory reports MODULE FAILURE and a traceback.
+            module.fail_json(msg=f"Failed to back up '{json_path}': {exc}")
 
-    module.exit_json(changed=True, msg="JSON file updated", new_data=new_data)
+    error = save_json_file(module, json_path, new_data)
+    if error:
+        failure = {"msg": error}
+        if "backup_file" in result:
+            failure["backup_file"] = result["backup_file"]
+        module.fail_json(**failure)
+
+    module.exit_json(**result)
 
 
 if __name__ == "__main__":

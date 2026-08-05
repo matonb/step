@@ -26,20 +26,34 @@ change. Durations are compared as durations rather than as text — step
 renormalises `8760h` to `8760h0m0s` when it rewrites `ca.json`, and that is not
 treated as a change. Settings this module does not manage are left untouched.
 
+The file is replaced atomically — written alongside, flushed, and moved into
+place in one step — so a failed or interrupted write leaves the original intact
+rather than truncated. An existing file keeps its mode and ownership; a file
+created by `create: true` takes the running user's umask, since this module sets
+neither. A symlinked `json_path` is followed rather than replaced. Set
+`backup: true` to keep a timestamped copy of what was there before.
+
 ### Parameters
 
-| Parameter                   | Type   | Required | Default | Description                               |
-| --------------------------- | ------ | -------- | ------- | ----------------------------------------- |
-| `ca_config`                 | path   | no       |         | Path to CA config file                    |
-| `ca_path`                   | path   | no       |         | Path to CA directory                      |
-| `crt`                       | path   | no       |         | Path to certificate file                  |
-| `db_datasource`             | string | no       |         | Database datasource string                |
-| `default_tls_cert_duration` | string | no       |         | Default TLS cert duration (e.g., "720h")  |
-| `json_path`                 | string | yes      |         | Path to the ca.json configuration file    |
-| `key`                       | path   | no       |         | Path to key file                          |
-| `max_tls_cert_duration`     | string | no       |         | Maximum TLS cert duration (e.g., "8760h") |
-| `min_tls_cert_duration`     | string | no       |         | Minimum TLS cert duration (e.g., "5m")    |
-| `root`                      | path   | no       |         | Path to root certificate                  |
+| Parameter                   | Type    | Required | Default | Description                                         |
+| --------------------------- | ------- | -------- | ------- | --------------------------------------------------- |
+| `backup`                    | boolean | no       | `false` | Copy the file before overwriting; see `backup_file` |
+| `ca_config`                 | path    | no       |         | Path to CA config file                              |
+| `ca_path`                   | path    | no       |         | Path to CA directory                                |
+| `create`                    | boolean | no       | `false` | Write a new file when `json_path` does not exist    |
+| `crt`                       | path    | no       |         | Path to certificate file                            |
+| `db_datasource`             | string  | no       |         | Database datasource string                          |
+| `default_tls_cert_duration` | string  | no       |         | Default TLS cert duration (e.g., "720h")            |
+| `json_path`                 | path    | yes      |         | Path to the ca.json configuration file              |
+| `key`                       | path    | no       |         | Path to key file                                    |
+| `max_tls_cert_duration`     | string  | no       |         | Maximum TLS cert duration (e.g., "8760h")           |
+| `min_tls_cert_duration`     | string  | no       |         | Minimum TLS cert duration (e.g., "5m")              |
+| `root`                      | path    | no       |         | Path to root certificate                            |
+
+`json_path` must already exist unless `create: true`. A path that is not there
+is far more often a typo than a request to build a CA configuration from
+nothing, and the old behaviour — writing a new, nearly empty file and reporting
+success — left the real CA untouched with the play still green.
 
 ### Examples
 
@@ -202,6 +216,17 @@ callback logs. Set `no_log: true` on the task, or supply `password` yourself, if
 that matters to you.
 
 ### Upgrading from 1.1.x
+
+Two changes to `matonb.step.configure`, both closing
+[#37](https://github.com/matonb/step/issues/37):
+
+- **A missing `json_path` now fails** rather than creating a new file. Set
+  `create: true` if a task genuinely builds a configuration from nothing.
+- **`json_path` expands `~`**, having previously been typed `str` while
+  `ca_path` and `ca_config` beside it were `path`. The two combined badly: a
+  `~/step-ca/config/ca.json` produced a literal `~` directory.
+
+Then, for `matonb.step.provisioner`:
 
 **`ca_path` or `ca_config` is now required, unless you set
 `management_mode: admin`.** Two things that used to work by reaching the CA over
