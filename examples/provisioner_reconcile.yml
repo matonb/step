@@ -6,7 +6,7 @@
 # `updated` return value. Claims the task does not set are left alone, so this
 # does not fight whatever else is configured on the provisioner.
 #
-# Durations are compared numerically, not textually. The CA normalises what it
+# Durations are compared numerically, not textually. The CA normalizes what it
 # stores - 5m comes back as 5m0s - and that is not treated as drift.
 - name: Keep provisioner certificate durations at their declared values
   hosts: step_ca
@@ -24,8 +24,12 @@
       - name: acme
         type: ACME
 
+  # The ca_server role ships this handler. It is repeated here because these
+  # playbooks stand alone; a play that includes the role should delete it,
+  # since a play-level handler of the same name shadows the role's.
   handlers:
     - name: Reload step-ca
+      become: true
       ansible.builtin.systemd_service:
         name: step-ca
         state: reloaded

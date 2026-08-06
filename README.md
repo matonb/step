@@ -23,7 +23,7 @@ Modify Step CA configuration JSON file (ca.json). Supports top-level parameters 
 The file is only rewritten when a requested setting differs from what it already
 holds, so `changed` is accurate and a `notify` handler fires only on a real
 change. Durations are compared as durations rather than as text — step
-renormalises `8760h` to `8760h0m0s` when it rewrites `ca.json`, and that is not
+renormalizes `8760h` to `8760h0m0s` when it rewrites `ca.json`, and that is not
 treated as a change. Settings this module does not manage are left untouched.
 
 The file is replaced atomically — written alongside, flushed, and moved into
@@ -52,10 +52,17 @@ neither. A symlinked `json_path` is followed rather than replaced. Set
 
 `json_path` must already exist unless `create: true`. A path that is not there
 is far more often a typo than a request to build a CA configuration from
-nothing, and the old behaviour — writing a new, nearly empty file and reporting
+nothing, and the old behavior — writing a new, nearly empty file and reporting
 success — left the real CA untouched with the play still green.
 
 ### Examples
+
+The `ca_server` role ships the `Reload step-ca` handler these tasks notify, so a
+play that includes the role needs no handler of its own; a play using the
+modules alone still does, as the [examples](examples/) show. It sends SIGHUP via
+the unit's `ExecReload`, which is what a `ca.json` change needs. When the service
+is not running it starts it instead — though systemd will skip that start until
+both `config/ca.json` and the password file exist, which the unit requires.
 
 ```yaml
 # Set certificate duration limits
@@ -64,7 +71,7 @@ success — left the real CA untouched with the play still green.
     default_tls_cert_duration: "720h" # 30 days
     json_path: /etc/step-ca/config/ca.json
     max_tls_cert_duration: "8760h" # 1 year
-  notify: restart step-ca
+  notify: Reload step-ca
 
 # Update database path
 - name: Configure database
@@ -139,7 +146,7 @@ by probing the CA rather than by taking a flag.
 | `config` | `ca.json`            | editing the file | `true`             |
 | `admin`  | the CA database      | the Admin API    | `false`            |
 
-A CA is in admin mode when it was initialised with `remote_management: true`,
+A CA is in admin mode when it was initialized with `remote_management: true`,
 which sets `authority.enableAdmin` in `ca.json`. With `management_mode: auto`
 (the default) the module reads that setting and follows it — the same field
 step-ca itself reads, so this detects the mode rather than inferring it. If
@@ -199,7 +206,7 @@ would prompt for one, so `admin_password_file` is rejected alongside
 
 ### Upgrading from 1.0.x
 
-Three behaviours changed for existing config-mode users:
+Three behaviors changed for existing config-mode users:
 
 - **Existing provisioners are now reconciled.** Previously `state: present` on a
   provisioner that already existed was a no-op. It now compares the `x509_*`
@@ -296,7 +303,7 @@ X509 duration parameters accept time units as follows:
 | Key                  | Type    | Description                                                                                    |
 | -------------------- | ------- | ---------------------------------------------------------------------------------------------- |
 | `changed`            | boolean | Whether any changes were made                                                                  |
-| `generated_password` | string  | The generated provisioner password, returned only when the module invented one                 |
+| `generated_password` | string  | Returned if the provisioner password was generated, not provided                               |
 | `management_mode`    | string  | The mode used, `admin` or `config`                                                             |
 | `name`               | string  | The name of the provisioner being managed                                                      |
 | `provisioners`       | list    | List of provisioners that matched the specified name and (optional) type                       |
@@ -388,6 +395,50 @@ configuration when one was found.
 `my-provisioner` exists. A provisioner of that name but another type reports as
 missing — and a non-check run of the same task would then try to create it, which
 step refuses.
+
+---
+
+## Roles
+
+Full role documentation is still outstanding
+([#39](https://github.com/matonb/step/issues/39)). The service options
+`ca_server` accepts are:
+
+| Variable                     | Default   | Description                                                                       |
+| ---------------------------- | --------- | --------------------------------------------------------------------------------- |
+| `ca_server_service_enabled`  | `true`    | Whether step-ca comes back after a reboot                                         |
+| `ca_server_service_state`    | `started` | `started`, `stopped`, `restarted`, `reloaded`, or null to leave the service alone |
+
+`started` is the idempotent choice. `restarted` and `reloaded` act on every run
+by design, so they also report `changed` on every run — that is the option
+working, not a bug.
+
+`ca_server_service_state` is applied only once both files the unit's
+`ConditionFileNotEmpty` directives name are present and non-empty:
+`config/ca.json` and `step_ca_password_file`. Before that there is nothing to
+run, and systemd would skip the start with a zero exit while Ansible reported a
+change on every run — success on a service that never came up.
+
+Both are checked while the role runs, so a CA initialized later in the same play
+is not seen until the next one. On a first run that does not matter: the unit
+file is new, so `Restart step-ca` fires at the end of the play and starts the CA.
+It only shows up when the unit is unchanged *and* the CA is initialized in the
+same play — a retry after a failed `initialize`, for instance — where the service
+comes up one run late.
+
+`step_ca_password_file` is required and has no default; the role has no
+`defaults` for it yet ([#39](https://github.com/matonb/step/issues/39)).
+
+The role also provides two handlers. `Restart step-ca` is notified by the unit
+file itself, because a changed unit needs the process re-executed — a reload
+would leave the running CA on the old `ExecStart`. `Reload step-ca` sends SIGHUP
+and is what the `configure` and `provisioner` tasks should notify.
+
+Both handlers, and the two systemd tasks, are skipped under `--check` on a host
+with no unit file yet. `systemd_service` refuses a unit it cannot find before it
+honours check mode, so the play would otherwise abort rather than report what it
+would do. On a host that has already run the role, `--check` reports drift
+normally.
 
 ## Special Notes
 

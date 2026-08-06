@@ -1,0 +1,16 @@
+---
+# Whether step-ca comes back after a reboot.
+ca_server_service_enabled: true
+
+# What to do with the running service, in the same vocabulary as
+# ansible.builtin.systemd_service: started, stopped, restarted or reloaded.
+# Set to null to leave the service alone entirely.
+#
+# Only applied once both files the unit's ConditionFileNotEmpty directives name
+# are in place and non-empty: config/ca.json and step_ca_password_file. Before
+# that there is nothing to run, and systemd would skip the start with a zero
+# exit while Ansible still reported a change on every run.
+#
+# `started` is the idempotent choice. `restarted` and `reloaded` act every run
+# by design, and report changed every run with it.
+ca_server_service_state: started

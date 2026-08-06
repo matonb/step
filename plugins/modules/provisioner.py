@@ -4,7 +4,7 @@
 
 This Ansible module creates, updates, removes and queries provisioners in a
 step-ca certificate authority. It works against both management modes: a CA
-that keeps its provisioners in C(ca.json), and one initialised with
+that keeps its provisioners in C(ca.json), and one initialized with
 C(--remote-management) that keeps them in the CA database and changes them
 through the authenticated Admin API.
 """
@@ -17,7 +17,7 @@ version_added: "1.0.0"
 description:
   - Creates, updates and removes provisioners in a step-ca certificate authority.
   - >-
-    Supports both management modes. A CA initialised with C(--remote-management)
+    Supports both management modes. A CA initialized with C(--remote-management)
     keeps its provisioners in the CA database and is managed through the Admin
     API, which requires admin credentials and needs the CA to be running. Any
     other CA keeps its provisioners in C(ca.json), which is edited in place and
@@ -220,7 +220,7 @@ EXAMPLES = r"""
     name: acme
     run_as: step
     type: ACME
-  notify: restart step-ca
+  notify: Reload step-ca
 
 - name: Add a JWK provisioner with certificate duration claims
   matonb.step.provisioner:

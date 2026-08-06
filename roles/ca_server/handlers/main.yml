@@ -1,0 +1,46 @@
+---
+# Two handlers, because the two things that change need different actions.
+#
+# A changed unit file needs the process re-executed: daemon-reload only makes
+# systemd parse it, so a running CA would keep the old ExecStart, password file
+# and sandboxing until something restarts it.
+- name: Restart step-ca
+  become: true
+  ansible.builtin.systemd_service:
+    name: step-ca
+    daemon_reload: true
+    state: restarted
+  when: >-
+    not ansible_check_mode
+    or (ca_server_unit_file is defined and ca_server_unit_file.stat.exists)
+
+# A changed ca.json only needs SIGHUP, which the unit exposes as
+# ExecReload=/bin/kill --signal HUP $MAINPID. Cheaper than a restart and it
+# does not drop in-flight requests. This is what the configure and provisioner
+# modules tell you to notify.
+- name: Reload step-ca
+  become: true
+  ansible.builtin.systemd_service:
+    name: step-ca
+    daemon_reload: true
+    state: reloaded
+  when: >-
+    not ansible_check_mode
+    or (ca_server_unit_file is defined and ca_server_unit_file.stat.exists)
+
+# Both guards say the same thing: run unless this is a check run against a host
+# that has no unit file yet.
+#
+# In a real run neither handler needs a guard at all. systemd_service issues
+# `start` rather than `reload`/`restart` when the unit is not running, and the
+# unit's ConditionFileNotEmpty directives make systemd skip that start with a
+# zero exit rather than fail it, so notifying either before `step ca init` is
+# harmless.
+#
+# A check run is the problem. The template task reports changed without writing
+# anything, so it notifies, and systemd_service calls fail_if_missing() before
+# it honours check mode - the play would abort on a host where the unit does
+# not exist yet.
+#
+# `is defined` because these handlers can be notified by a task in a play that
+# never ran the role's tasks, and so never registered ca_server_unit_file.
