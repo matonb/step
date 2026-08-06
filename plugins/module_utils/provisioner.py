@@ -81,8 +81,8 @@ def claim_flags(desired: dict[str, Optional[str]]) -> list[str]:
 def claim_drift(desired: dict[str, Optional[str]], claims: dict) -> list[str]:
     """Find requested claims whose value on the CA differs.
 
-    Durations are compared numerically because the CA normalises them when it
-    serialises: a claim requested as C(5m) is reported as C(5m0s).
+    Durations are compared numerically because the CA normalizes them when it
+    serializes: a claim requested as C(5m) is reported as C(5m0s).
 
     Args:
         desired: Requested claim values keyed by module parameter name.

@@ -1,5 +1,5 @@
 ---
-# Managing provisioners on a CA initialised with --remote-management.
+# Managing provisioners on a CA initialized with --remote-management.
 #
 # Provisioners live in the CA database, not ca.json, and are changed through
 # the authenticated Admin API. Changes are live immediately, so

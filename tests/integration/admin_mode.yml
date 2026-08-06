@@ -1,5 +1,5 @@
 ---
-# Drives the provisioner module against a CA initialised with
+# Drives the provisioner module against a CA initialized with
 # --remote-management, where provisioners live in the CA database and are
 # changed through the authenticated Admin API.
 - name: Admin mode (remote management)

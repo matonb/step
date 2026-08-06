@@ -94,7 +94,7 @@ class TestChangeDetection:
         ],
         ids=["hours", "minutes", "mixed-units", "fractional", "identical"],
     )
-    def test_a_renormalised_duration_is_not_a_change(self, stored, requested):
+    def test_a_renormalized_duration_is_not_a_change(self, stored, requested):
         # step rewrites ca.json's claims in its own spelling: a value set here
         # as 8760h comes back as 8760h0m0s. Comparing the text would report a
         # change on every run and restart the CA each time, forever.
@@ -260,9 +260,9 @@ class TestReportedChangedState:
 
         assert result["changed"] is False
 
-    def test_a_renormalised_file_is_left_alone_end_to_end(self, tmp_path):
+    def test_a_renormalized_file_is_left_alone_end_to_end(self, tmp_path):
         # The realistic case: this module wrote 8760h, then step rewrote ca.json
-        # while adding a provisioner and normalised it to 8760h0m0s. Re-running
+        # while adding a provisioner and normalized it to 8760h0m0s. Re-running
         # the same play must not report changed.
         config_file = tmp_path / "ca.json"
         config_file.write_text(

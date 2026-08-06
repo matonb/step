@@ -67,7 +67,7 @@ class TestClaimDrift:
         # rather than the value the task asked for.
         assert claim_drift({**NO_CLAIMS, "x509_min": "5m"}, {}) == ["x509_min"]
 
-    def test_normalised_equivalent_is_not_drift(self):
+    def test_normalized_equivalent_is_not_drift(self):
         assert claim_drift({**NO_CLAIMS, "x509_min": "5m"}, {"minTLSCertDuration": "5m0s"}) == []
 
     def test_different_value_is_drift(self):
