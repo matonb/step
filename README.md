@@ -398,6 +398,59 @@ step refuses.
 
 ---
 
+## matonb.step.initialize
+
+Running against a CA that is already there reports `ok` and changes nothing, so
+a play containing the task can be re-run.
+
+What counts as "already there" is decided by the CA, not by a list of filenames
+in the module. `config/ca.json` has to parse, and every file it names — `root`,
+`crt`, `key`, `federatedRoots`, the `ssh` host and user keys, and an RA's
+`credentialsFile` — has to be present and non-empty. Relative entries are
+resolved against `path`; entries carrying a URI scheme are not paths on this
+host and are skipped, so a KMS-backed CA whose `key` is
+`azurekms:name=…;vault=…` is judged on the files it does name.
+
+That matters because there is no one file set. A registration authority proxies
+signing upstream and owns no root key; a `linked` deployment keeps its keys with
+Certificate Manager. Both are complete CAs with a fraction of a standalone CA's
+files, and both are now recognized without the module having to know what they
+write. It also means a CA whose **root key is kept offline** — best practice,
+since step-ca signs with the intermediate — reports `ok` rather than looking
+half-built.
+
+`config/defaults.json` is deliberately not part of the test. step-ca itself is
+started with `ca.json` and never reads it, so a CA without it is initialized and
+working. It is not worthless though — it carries the `ca_url` and `root`
+defaults the `step` CLI and `matonb.step.provisioner` fall back on — so a CA
+reported `ok` without it can still fail a later task that relies on those.
+Restore the file; do not reinitialize the CA for it.
+
+The `templates` block written by `ssh: true` is also excluded. Those files are
+real, but leaving them out errs towards calling a CA complete, and erring the
+other way is what made this module unusable for RA and linked deployments.
+
+The ways of being unfinished are reported differently:
+
+| Situation | Behavior |
+| --- | --- |
+| `ca.json` will not parse, or a file it names cannot be read | Fails, and points at the file and at `become`/`run_as`. A reading problem is not a CA problem, so `force` is **not** suggested |
+| Files the config names are missing or empty | Fails, naming them. Restore them, or `force` to start again |
+
+That distinction matters in practice: running the task as the wrong user makes
+key material unreadable, and answering that with `force` would delete a healthy
+root key over a file mode.
+
+`pki: true` is the exception. `step ca init --pki` writes no `ca.json` to
+consult, so there the certificates and keys a PKI has are checked directly.
+
+`force: true` deletes the files `step ca init` creates — which is not
+necessarily every file a given deployment has. It is a way to start again, not a
+way to clear up after an arbitrary configuration, and it destroys the root key
+irrecoverably.
+
+---
+
 ## Roles
 
 Full role documentation is still outstanding

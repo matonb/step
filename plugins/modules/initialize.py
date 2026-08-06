@@ -15,6 +15,40 @@ description:
     provisioners in the CA database instead of C(ca.json) and creates a super
     administrator. It requires a database, so it cannot be combined with
     C(no_db), and C(admin_subject) is only valid alongside it.
+  - >-
+    Running against a CA that is already initialized reports C(ok) and changes
+    nothing, so a play containing this task can be re-run. Anything that is
+    neither an empty directory nor a working CA fails instead, since
+    initializing over it could destroy a PKI. I(force) discards whatever is
+    there.
+  - >-
+    Whether a CA is complete is decided by the CA, not by a list of filenames
+    kept in this module: C(config/ca.json) has to parse, and every file it
+    names - C(root), C(crt), C(key), C(federatedRoots) and the C(ssh) keys -
+    has to be present and non-empty. Relative entries are resolved against
+    I(path). Deployments that keep less on disk, such as a registration
+    authority or a C(linked) deployment, are therefore recognized without this
+    module having to know what they write.
+  - >-
+    C(config/defaults.json) is not part of that test. step-ca is started with
+    C(ca.json) and never reads it, so a CA without it is initialized and
+    working. It is not worthless, though - it carries the defaults the step CLI
+    and M(matonb.step.provisioner) fall back on for C(ca_url) and C(root) - so
+    a CA reported C(ok) without it can still fail a later task that relies on
+    those. Restore the file; do not reinitialize the CA for it.
+  - >-
+    The ways of being unfinished are reported differently. A C(ca.json) that
+    cannot be read, or key material this task cannot see, is a reading problem
+    rather than a CA problem, so the task says so and does not suggest
+    I(force). A CA missing files its configuration names may be half built, and
+    there starting again is a legitimate remedy.
+  - >-
+    I(pki) is the exception, since C(step ca init --pki) writes no C(ca.json)
+    to consult. There the certificates and keys a PKI has are checked directly.
+  - >-
+    I(force) deletes the files C(step ca init) creates, which is not
+    necessarily every file a given deployment has. It is a way to start again,
+    not a way to clear up after an arbitrary configuration.
 options:
   acme:
     description:
@@ -153,7 +187,7 @@ options:
     type: str
   no_db:
     description:
-      - Initialise the CA without a database.
+      - Initialize the CA without a database.
       - Incompatible with I(remote_management) and I(acme), which both require one.
     required: false
     type: bool
@@ -241,17 +275,39 @@ EXAMPLES = r"""
 
 RETURN = r"""
 admin_subject:
-  description: Subject of the super administrator, or null when remote management is disabled.
+  description:
+    - >-
+      Subject of the super administrator, or null for a CA with no Admin API.
+      Whichever the task supplied, or C(step) where I(admin_subject) was left
+      out and the CA is in admin mode.
+    - >-
+      Derived the same way whether the CA was just created or was already
+      there, so re-running the task reports the same value. It is not read back
+      from the host: an existing CA's administrator lives in the CA database
+      rather than in C(ca.json).
   returned: success
   type: str
 
 changed:
-  description: Indicates if the module made changes
+  description:
+    - Whether the CA was initialized.
+    - False when it was already initialized and I(force) was not set.
   returned: always
   type: bool
 
 management_mode:
-  description: How provisioners will be managed, either C(admin) or C(config).
+  description:
+    - How provisioners will be managed, either C(admin) or C(config).
+    - >-
+      On an already-initialized CA this is read from C(authority.enableAdmin)
+      in the CA's own C(ca.json), so it describes the CA on disk rather than
+      what the task asked for. A C(--pki) directory has no C(ca.json), so there
+      it is the mode the task asked for.
+  returned: success
+  type: str
+
+msg:
+  description: What was done, or why nothing needed doing.
   returned: success
   type: str
 """
@@ -259,17 +315,21 @@ management_mode:
 import os
 import pathlib
 import re
-from typing import Any
+import stat
+from typing import Any, Optional
 
 from ansible.module_utils.basic import AnsibleModule
 
+from ansible_collections.matonb.step.plugins.module_utils.connection import read_authority
 from ansible_collections.matonb.step.plugins.module_utils.process import (
     CommandTimeoutError,
     run_command,
 )
+from ansible_collections.matonb.step.plugins.module_utils.utils import read_json_file
 
-# The files `step ca init` creates. Their presence is what makes a directory an
-# initialised CA, and what `force` deletes.
+# The files `step ca init` creates. Two jobs only: telling an empty directory
+# from one holding something, and naming what `force` deletes. Whether a CA is
+# *complete* is a question for its own ca.json - see assess_ca().
 CA_FILE_NAMES = (
     "certs/intermediate_ca.crt",
     "certs/root_ca.crt",
@@ -277,6 +337,45 @@ CA_FILE_NAMES = (
     "config/defaults.json",
     "secrets/intermediate_ca_key",
     "secrets/root_ca_key",
+)
+
+# Keys in ca.json naming a file step-ca opens at startup. Both `root` and
+# `federatedRoots` are multiString upstream, accepting a bare string or a list,
+# so both are read either way.
+#
+# `db.dataSource` is deliberately absent: step-ca creates the database on first
+# start, so a config-mode CA that has never run does not have one and requiring
+# it would fail a working CA.
+#
+# The `templates` block `--ssh` writes is deliberately absent too. Those files
+# are real, but leaving them out errs towards calling a CA complete, and erring
+# the other way is what made this module unusable for RA and linked deployments
+# in the first place.
+CONFIG_PATH_KEYS = ("crt", "federatedRoots", "key", "root")
+SSH_PATH_KEYS = ("hostKey", "userKey")
+AUTHORITY_PATH_KEYS = ("credentialsFile",)
+
+# A value carrying a URI scheme is not a path on this host. `--kms` and friends
+# put things like "azurekms:name=intermediate;vault=my-vault" in `key` and in
+# the ssh keys, and joining that onto the CA directory produced a filename that
+# could never exist - so a perfectly healthy KMS-backed CA was reported broken
+# and its operator advised to delete the root key. An absolute path starts with
+# a separator and a relative one cannot reach a colon without passing one, so
+# nothing legitimate matches.
+_URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+
+# What assess_ca() found at the CA path.
+CA_ABSENT = "absent"
+CA_COMPLETE = "complete"
+CA_INCOMPLETE = "incomplete"
+CA_UNREADABLE = "unreadable"
+
+# Offered as the way out, so it has to say what taking it costs.
+# remove_ca_files deletes secrets/root_ca_key, which cannot be regenerated, and
+# the refusal reaches operators of CAs that may be perfectly healthy.
+FORCE_ADVICE = (
+    "Use force: true to discard what is there and start again. That deletes the root key, "
+    "which cannot be recovered, and invalidates every certificate this CA has ever issued."
 )
 
 
@@ -413,6 +512,217 @@ def ca_file_paths(step_path: str) -> list[str]:
     return [os.path.join(step_path, name) for name in CA_FILE_NAMES]
 
 
+def pki_file_paths(step_path: str) -> list[str]:
+    """Return the files C(step ca init --pki) creates.
+
+    C(--pki) writes the PKI and stops there, leaving no C(ca.json) or
+    C(defaults.json) (C(certificates/pki/pki.go), guarded by C(pkiOnly)). It is
+    the one case with no configuration to consult, so it is judged against a
+    fixed list - justified here by there being nothing to ask, not by
+    convenience.
+
+    Args:
+        step_path: The path to the Step CA directory.
+
+    Returns:
+        List[str]: The paths, in a stable order.
+    """
+    return [os.path.join(step_path, name) for name in CA_FILE_NAMES if not name.startswith("config/")]
+
+
+def configured_paths(config: dict[str, Any], step_path: str) -> list[str]:
+    """Return every file path a C(ca.json) names, resolved against C(step_path).
+
+    This is what makes completeness a question for the CA rather than for this
+    module. A registration authority owns no root key, and a linked deployment
+    keeps its keys elsewhere, so any fixed list of filenames is wrong for
+    somebody. What a CA cannot do without is whatever its own configuration
+    tells step-ca to open.
+
+    Deliberately not C(db.dataSource): step-ca creates the database itself on
+    first start, so a valid new CA has none and requiring it would fail a CA
+    that works.
+
+    Args:
+        config: A parsed C(ca.json).
+        step_path: The path to the Step CA directory, used to resolve relative
+            entries.
+
+    Returns:
+        List[str]: Absolute paths, deduplicated, in a stable order.
+    """
+    named: list[str] = []
+
+    for key in CONFIG_PATH_KEYS:
+        named.extend(_path_values(config.get(key)))
+
+    for block, keys in ((config.get("ssh"), SSH_PATH_KEYS), (config.get("authority"), AUTHORITY_PATH_KEYS)):
+        if isinstance(block, dict):
+            for key in keys:
+                named.extend(_path_values(block.get(key)))
+
+    # step-ca runs with WorkingDirectory set to STEPPATH and is handed a
+    # relative config path (roles/ca_server/templates/unit.j2), so a relative
+    # entry here means relative to the CA directory, not to wherever Ansible
+    # happens to be.
+    resolved = [path if os.path.isabs(path) else os.path.join(step_path, path) for path in named]
+    return list(dict.fromkeys(resolved))
+
+
+def _path_values(value: Any) -> list[str]:
+    """Return the filesystem paths in one ca.json entry.
+
+    Upstream types several of these as multiString, which unmarshals from a
+    bare string or from a list of them, so both shapes are read. Anything that
+    is not a path on this host - a KMS URI, a number, a nested object - is
+    dropped rather than guessed at.
+
+    Args:
+        value: Whatever the key held.
+
+    Returns:
+        List[str]: The paths, unresolved.
+    """
+    items = value if isinstance(value, list) else [value]
+    return [item for item in items if isinstance(item, str) and item and not _URI_SCHEME.match(item)]
+
+
+def unusable_paths(paths: list[str]) -> tuple[list[str], list[str]]:
+    """Return those of C(paths) step-ca could not open, split by why.
+
+    The two want opposite advice, so they are kept apart. A file that is not
+    there may mean a half-built CA, where starting again is reasonable. A file
+    this task cannot see - C(secrets/) traversed as the wrong user, most often -
+    says nothing about the CA at all, and answering it with C(force) would
+    delete a healthy root key over a permission problem.
+
+    Empty counts as missing, for the reason the unit file uses
+    C(ConditionFileNotEmpty): a truncated key is not a key, and a CA whose root
+    certificate is zero bytes does not start.
+
+    Args:
+        paths: Absolute paths to check.
+
+    Returns:
+        Tuple of the missing or empty paths and the unreadable ones, each in
+        the order given.
+    """
+    missing: list[str] = []
+    unreadable: list[str] = []
+
+    for path in paths:
+        try:
+            # os.path.isfile() reports False for a permission error exactly as
+            # it does for a file that is not there, and stat'ing once avoids a
+            # file disappearing between the check and the size.
+            info = os.stat(path)
+        except FileNotFoundError:
+            missing.append(path)
+        except OSError:
+            unreadable.append(path)
+        else:
+            if not (stat.S_ISREG(info.st_mode) and info.st_size > 0):
+                missing.append(path)
+
+    return missing, unreadable
+
+
+def _assess_pki(step_path: str) -> tuple[str, Optional[str], Optional[str]]:
+    """Assess a directory C(step ca init --pki) wrote.
+
+    The one case with no configuration to consult, so a fixed list is all there
+    is. There is no C(ca.json), and so no management mode to report either.
+
+    Args:
+        step_path: The path to the Step CA directory.
+
+    Returns:
+        Tuple shaped as :func:`assess_ca` returns.
+    """
+    missing, unreadable = unusable_paths(pki_file_paths(step_path))
+    if unreadable:
+        return CA_UNREADABLE, None, ("a --pki directory holds files this task cannot read: " + ", ".join(unreadable))
+    if missing:
+        return CA_INCOMPLETE, None, ("a --pki directory is missing " + ", ".join(missing))
+    return CA_COMPLETE, None, None
+
+
+def assess_ca(step_path: str, params: dict[str, Any]) -> tuple[str, Optional[str], Optional[str]]:
+    """Decide whether C(step_path) already holds a CA, and whether it works.
+
+    Four answers, because the ways of being unfinished want opposite advice. A
+    C(ca.json) that cannot be read, or key material this task cannot see, is
+    repairable and no reason to touch the CA. A CA missing the files its
+    configuration names may be half built, and starting again is a legitimate
+    remedy there.
+
+    Args:
+        step_path: The path to the Step CA directory.
+        params: The module parameters.
+
+    Returns:
+        Tuple of the state (one of C(CA_ABSENT), C(CA_COMPLETE),
+        C(CA_UNREADABLE), C(CA_INCOMPLETE)), the management mode when that can
+        be read, and what is wrong when it cannot.
+    """
+    if not find_existing_ca_files(step_path):
+        return CA_ABSENT, None, None
+
+    config_file = os.path.join(step_path, "config", "ca.json")
+
+    # Keyed on there being no configuration rather than on the request. A
+    # directory holding a full CA gets read like one even when the task asked
+    # for --pki, so no single option can switch every integrity check off.
+    if params.get("pki") and not os.path.exists(config_file):
+        return _assess_pki(step_path)
+
+    config, error = read_json_file(config_file)
+    if error:
+        # Missing entirely is a different thing from unreadable: files are here
+        # but the configuration that describes them is not, which is what a run
+        # interrupted part-way through looks like.
+        state = CA_INCOMPLETE if not os.path.exists(config_file) else CA_UNREADABLE
+        return state, None, error
+
+    authority, error = read_authority(config, config_file)
+    if error:
+        return CA_UNREADABLE, None, error
+
+    missing, unreadable = unusable_paths(configured_paths(config, step_path))
+    if unreadable:
+        return CA_UNREADABLE, None, ("config/ca.json names files this task cannot read: " + ", ".join(unreadable))
+    if missing:
+        return CA_INCOMPLETE, None, ("config/ca.json names files that are missing or empty: " + ", ".join(missing))
+
+    return CA_COMPLETE, ("admin" if authority.get("enableAdmin", False) else "config"), None
+
+
+def default_admin_subject(params: dict[str, Any], mode: str) -> Optional[str]:
+    """Return the subject of the super administrator for a CA in C(mode).
+
+    Both the initializing and the already-initialized paths report this, and
+    they have to agree: a value that changed between the first and second run
+    of the same task would break any play that registers the result.
+
+    The mode decides first, not the request. Only a CA with the Admin API has a
+    super administrator to name, so asking for one against a config-mode CA
+    reports None rather than echoing back a subject that does not exist there.
+    On the initializing path the two cannot disagree - validate_admin_options
+    rejects I(admin_subject) without I(remote_management) - so this only bites
+    on the already-initialized path, which is where it matters.
+
+    Args:
+        params: The module parameters.
+        mode: The management mode the CA is in, "admin" or "config".
+
+    Returns:
+        Optional[str]: The subject, or None for a CA with no Admin API.
+    """
+    if mode != "admin":
+        return None
+    return params.get("admin_subject") or "step"
+
+
 def find_existing_ca_files(step_path: str) -> list[str]:
     """Report which of the CA's files are already present.
 
@@ -515,15 +825,52 @@ def main() -> None:
     # Provisioners of a remote-management CA live in the CA database and are
     # managed through the Admin API; every other CA keeps them in ca.json.
     management_mode = "admin" if module.params.get("remote_management") else "config"
-    admin_subject = module.params.get("admin_subject") or ("step" if management_mode == "admin" else None)
+    admin_subject = default_admin_subject(module.params, management_mode)
 
-    existing = find_existing_ca_files(step_path)
-    if existing and not module.params["force"]:
+    state, observed, detail = assess_ca(step_path, module.params)
+
+    if state != CA_ABSENT and not module.params["force"]:
+        # A working CA is the desired state already, so say so rather than
+        # failing: a play containing this task could otherwise only ever be run
+        # once. What "working" means is the CA's own account of itself, not a
+        # list of filenames kept here - see assess_ca().
+        if state == CA_COMPLETE:
+            mode = observed or management_mode
+            module.exit_json(
+                changed=False,
+                msg="Step CA is already initialized.",
+                # Derived exactly as it is on the initializing path, so the
+                # same task reports the same subject every run. It is the
+                # request plus the same default, not a read-back: the CA's real
+                # administrator lives in the CA database, not in ca.json.
+                admin_subject=default_admin_subject(module.params, mode),
+                management_mode=mode,
+            )
+
+        if state == CA_UNREADABLE:
+            # Deliberately not FORCE_ADVICE. Every way of reaching this - a
+            # truncated write, a bad hand-edit, the wrong user - is a problem
+            # with reading, not with the CA, and answering it by deleting the
+            # root key would be advice to destroy a possibly healthy CA to
+            # clear a syntax error or a permission bit.
+            #
+            # It does not claim the CA is otherwise sound: when ca.json will
+            # not parse there is nothing to check the key material against, so
+            # this says only that the task changed nothing.
+            module.fail_json(
+                msg=(
+                    f"{step_path} holds a CA this task cannot read: {detail}.\n"
+                    "config/ca.json has to be readable JSON holding an 'authority' object, and the "
+                    "files it names have to be readable by whoever runs this task - check 'become' "
+                    "and 'run_as' before assuming the CA is at fault. Nothing has been changed."
+                )
+            )
+
         module.fail_json(
             msg=(
-                f"Found {existing[0]}, cannot continue.\n"
-                "Use force: true to override or ensure that none of the "
-                "following files exist:\n" + "\n".join(ca_file_paths(step_path))
+                f"{step_path} holds something that is not a working CA: {detail}.\n"
+                "Restore the missing files if you know where they went - that keeps the existing "
+                "CA and everything it has issued.\n" + FORCE_ADVICE
             )
         )
 
@@ -536,7 +883,7 @@ def main() -> None:
             changed=True,
             msg=(
                 "Check mode: the existing CA would be deleted and Step CA reinitialized"
-                if existing
+                if state != CA_ABSENT
                 else "Check mode: Step CA would be initialized"
             ),
             admin_subject=admin_subject,
