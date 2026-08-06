@@ -1,0 +1,27 @@
+# A host with a real PID 1 systemd, which is the only way to test the ca_server
+# role honestly: the whole design turns on what systemd does with a unit whose
+# ConditionFileNotEmpty is unmet, and on systemctl's exit code when it skips
+# one. Neither can be observed without systemd actually running.
+#
+# python3 and python3-apt are Ansible's requirements, not the role's; sudo is
+# needed because the role uses `become`. Everything the role itself needs -
+# libcap2-bin included - is deliberately absent, so a missing dependency fails
+# the suite instead of being masked by the image.
+FROM debian:bookworm
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        dbus \
+        python3 \
+        python3-apt \
+        sudo \
+        systemd \
+        systemd-sysv \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# systemd's own idea of a clean shutdown.
+STOPSIGNAL SIGRTMIN+3
+
+CMD ["/lib/systemd/systemd"]

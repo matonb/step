@@ -1,0 +1,17 @@
+---
+# Stands in for a configure or provisioner task that changed ca.json. The point
+# is the verb: Reload must SIGHUP the running CA rather than restart it, and
+# the only way to tell from outside is that the main PID survives.
+- name: Notify the reload handler
+  hosts: step_role
+  gather_facts: true
+
+  roles:
+    - matonb.step.ca_server
+
+  tasks:
+    - name: Stand in for a ca.json change
+      ansible.builtin.debug:
+        msg: notifying Reload step-ca
+      changed_when: true
+      notify: Reload step-ca

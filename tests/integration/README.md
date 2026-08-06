@@ -1,10 +1,14 @@
 # Integration tests
 
-Drives `matonb.step.provisioner` against real `step-ca` instances, one in each
-management mode. Unit tests cannot prove that a flag is accepted by the real
-binary, or that an Admin API change reaches the running CA — these can.
+Two suites, for the two halves of the collection.
 
-## Running
+`run.sh` drives `matonb.step.provisioner` against real `step-ca` instances, one
+in each management mode. `role.sh` drives the `ca_server` role against
+containers running a real PID 1 systemd. Unit tests cannot prove that a flag is
+accepted by the real binary, that an Admin API change reaches the running CA, or
+that systemd does what a `when` clause assumed — these can.
+
+## `run.sh` — the provisioner module
 
 ```bash
 bash tests/integration/run.sh
@@ -46,6 +50,40 @@ rather than against the CA. This is the regression test for
 [#31](https://github.com/matonb/step/issues/31); before the fix the second add
 failed with `provisioner with name acme already exists`. A single `SIGHUP` at
 the end confirms the CA converges on exactly what `ca.json` holds.
+
+## `role.sh` — the ca_server role
+
+```bash
+bash tests/integration/role.sh
+```
+
+Nine scenarios, run once per OS family — Debian and Rocky 9 — because the two
+install paths diverge: apt's `deb` option against dnf's URL-as-name, different
+support packages, and a GPG decision on one side only. Requires `docker`,
+`ansible-playbook` and the `community.docker` collection. A full run takes
+around seven minutes; `STEP_TEST_FAMILIES=debian` halves it while iterating, and
+`STEP_TEST_KEEP` leaves the containers up for inspection.
+
+| # | Scenario | What it pins |
+| --- | --- | --- |
+| 1 | Check mode on an untouched host | Nothing installed and no unit written; the three guards that make `--check` survive a host with no step-ca binary |
+| 2 | Fresh host | Unit written and enabled, `ConditionResult=no`, the `Restart` handler fires without failing the play |
+| 3 | Second run | No changes |
+| 4 | Check mode, provisioned | Reports drift instead of aborting |
+| 5 | Check mode, package but no unit | Completes; without the guard this aborts with `Could not find the requested service step-ca` |
+| 6 | CA initialized | The service-state gate opens and the CA serves |
+| 7 | Hand-edited unit | Restored **and** the process re-executed — MainPID must change |
+| 8 | Empty password file | The gate closes again; the run reports no change |
+| 9 | Reload | The handler fires **and** MainPID is unchanged |
+
+7 and 9 are the ones that matter most: they distinguish restart from reload,
+which is the error the role's first design made. 9 asserts the handler ran
+before comparing PIDs, because an unchanged PID is also what a handler that
+never fired would produce.
+
+Four defects were found by running this rather than by reading anything: a
+missing `libcap2-bin`, a missing `procps`, an apt cache `--check` will not
+refresh, and a unit whose `ExecReload` had no `/bin/kill`.
 
 ## One thing worth knowing
 
