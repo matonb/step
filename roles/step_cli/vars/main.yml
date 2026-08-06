@@ -1,0 +1,63 @@
+---
+# Role-internal. Override step_cli_packages in defaults/main.yml instead.
+#
+# ansible_facts['architecture'] -> the architecture upstream names its assets
+# after. Debian and RPM disagree on nearly all of them, so they are mapped
+# separately.
+# Taken from the release assets themselves rather than from a naming convention:
+#   step-cli_0.30.6-1_arm64.deb   vs   step-cli-0.30.6-1.aarch64.rpm
+step_cli_deb_architectures:
+  x86_64: amd64
+  aarch64: arm64
+  armv7l: armhf
+  armv6l: armhf6
+  armv5tel: armel
+  ppc64le: ppc64el
+  mips: mips
+  mips64: mips64
+  i386: i386
+  i686: i386
+
+step_cli_rpm_architectures:
+  x86_64: x86_64
+  aarch64: aarch64
+  armv7l: armv7hl
+  armv6l: armv6hl
+  armv5tel: armv5tel
+  ppc64le: ppc64le
+  mips: mips
+  mips64: mips64
+  i386: i386
+  i686: i386
+
+# Fails loudly on an architecture that has no mapping rather than building a
+# URL that 404s halfway through a play.
+step_cli_mapping_advice: >-
+  Set step_cli_packages to install from somewhere else.
+
+step_cli_deb_architecture: >-
+  {{ step_cli_deb_architectures[ansible_facts['architecture']]
+     | mandatory('step_cli has no Debian package mapping for '
+                 ~ ansible_facts['architecture'] ~ '. '
+                 ~ step_cli_mapping_advice) }}
+
+step_cli_rpm_architecture: >-
+  {{ step_cli_rpm_architectures[ansible_facts['architecture']]
+     | mandatory('step_cli has no RPM mapping for '
+                 ~ ansible_facts['architecture'] ~ '. '
+                 ~ step_cli_mapping_advice) }}
+
+# The `-1` is upstream's package revision, not part of the version, and it only
+# appears from 0.28.4 onwards. Pinning a version below that needs
+# step_cli_packages set outright.
+step_cli_release_base: https://github.com/smallstep/cli/releases/download
+
+step_cli_asset: >-
+  {{ 'step-cli_' ~ step_cli_version
+     ~ '-1_' ~ step_cli_deb_architecture ~ '.deb'
+     if ansible_facts['os_family'] == 'Debian'
+     else 'step-cli-' ~ step_cli_version
+     ~ '-1.' ~ step_cli_rpm_architecture ~ '.rpm' }}
+
+step_cli_package_urls:
+  - "{{ step_cli_release_base }}/v{{ step_cli_version }}/{{ step_cli_asset }}"

@@ -1,7 +1,20 @@
 ---
-- name: Install package.
+# No support-package task here, unlike install_Debian.yml. EL's systemd already
+# requires libcap (which owns getcap and setcap) and util-linux (which owns
+# /bin/kill), so there is nothing left to ask for - see vars/main.yml. A task
+# installing them anyway would be one the suite could never make fail, which is
+# how it was caught.
+
+# dnf takes a URL as a name and downloads it, so the same list serves both
+# families; only the asset extension differs (see vars/main.yml).
+#
+# disable_gpg_check comes from a variable rather than being hardcoded here:
+# ca_server_packages is meant to be repointed, and switching signature
+# verification off for someone installing from their own signed repository
+# would be a decision made behind their back.
+- name: Install step-ca and the step CLI
   become: true
-  ansible.builtin.package:
-    name: "{{ item }}"
+  ansible.builtin.dnf:
+    name: "{{ ca_server_packages }}"
     state: present
-  loop: "{{ step_ca_packages }}"
+    disable_gpg_check: "{{ ca_server_disable_gpg_check }}"

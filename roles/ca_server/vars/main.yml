@@ -1,0 +1,98 @@
+---
+# Role-internal. Override ca_server_packages in defaults/main.yml instead of
+# anything here - these exist to build that list, not to be configured.
+
+# ansible_facts['architecture'] -> the architecture upstream names its assets
+# after. Debian and RPM disagree on nearly all of them, so they are mapped
+# separately. Taken from the release assets themselves rather than from a
+# naming convention:
+#   step-ca_0.30.2-1_arm64.deb   vs   step-ca-0.30.2-1.aarch64.rpm
+#
+# step-ca publishes no ppc64 or mips assets, so neither map carries them. The
+# step_cli role's maps do, because the CLI does.
+ca_server_deb_architectures:
+  x86_64: amd64
+  aarch64: arm64
+  armv7l: armhf
+  armv6l: armhf6
+  armv5tel: armel
+  i386: i386
+  i686: i386
+
+ca_server_rpm_architectures:
+  x86_64: x86_64
+  aarch64: aarch64
+  armv7l: armv7hl
+  armv6l: armv6hl
+  armv5tel: armv5tel
+  i386: i386
+  i686: i386
+
+# Fails loudly on an architecture with no mapping rather than building a URL
+# that 404s halfway through a play. Worded as this role's coverage, not as a
+# claim about what upstream publishes, so it stays true if their asset list
+# moves again.
+ca_server_mapping_advice: >-
+  Set ca_server_packages to install from somewhere else.
+
+ca_server_deb_architecture: >-
+  {{ ca_server_deb_architectures[ansible_facts['architecture']]
+     | mandatory('ca_server has no Debian package mapping for '
+                 ~ ansible_facts['architecture'] ~ '. '
+                 ~ ca_server_mapping_advice) }}
+
+ca_server_rpm_architecture: >-
+  {{ ca_server_rpm_architectures[ansible_facts['architecture']]
+     | mandatory('ca_server has no RPM mapping for '
+                 ~ ansible_facts['architecture'] ~ '. '
+                 ~ ca_server_mapping_advice) }}
+
+# The release asset names. The `-1` is upstream's package revision, not part of
+# the version, and it only appears from 0.28.4 onwards -
+# step-ca_0.28.0_amd64.deb carries no revision at all. Pinning a version below
+# that needs ca_server_packages set outright.
+ca_server_release_base: https://github.com/smallstep
+
+ca_server_ca_asset: >-
+  {{ 'step-ca_' ~ ca_server_ca_version
+     ~ '-1_' ~ ca_server_deb_architecture ~ '.deb'
+     if ansible_facts['os_family'] == 'Debian'
+     else 'step-ca-' ~ ca_server_ca_version
+     ~ '-1.' ~ ca_server_rpm_architecture ~ '.rpm' }}
+
+ca_server_cli_asset: >-
+  {{ 'step-cli_' ~ ca_server_cli_version
+     ~ '-1_' ~ ca_server_deb_architecture ~ '.deb'
+     if ansible_facts['os_family'] == 'Debian'
+     else 'step-cli-' ~ ca_server_cli_version
+     ~ '-1.' ~ ca_server_rpm_architecture ~ '.rpm' }}
+
+ca_server_package_urls:
+  - >-
+    {{ ca_server_release_base }}/certificates/releases/download/v{{
+      ca_server_ca_version }}/{{ ca_server_ca_asset }}
+  - >-
+    {{ ca_server_release_base }}/cli/releases/download/v{{
+      ca_server_cli_version }}/{{ ca_server_cli_asset }}
+
+# Debian only, and that asymmetry is the point rather than an omission.
+#
+# The role and the unit file shell out to two things a minimal host may not
+# have: getcap and setcap, without which community.general.capabilities fails
+# outright, and /bin/kill, which unit.j2's ExecReload uses to send SIGHUP and
+# without which `systemctl reload` fails with status=203/EXEC. Both were found
+# by running the role against a container rather than by reading anything.
+#
+# Debian splits the capability tooling out of the library - systemd pulls
+# libcap2, not libcap2-bin - and procps is not a systemd dependency either, so
+# both have to be asked for.
+#
+# EL does not split either one. `rpm -qR systemd` requires libcap.so.2, which
+# only the libcap package provides and which also owns /usr/sbin/getcap, and it
+# requires util-linux, which owns /bin/kill. On a host running systemd - the
+# only kind this role targets - both are already there, so naming them would be
+# a task that can never do anything.
+ca_server_support_packages:
+  Debian:
+    - libcap2-bin
+    - procps

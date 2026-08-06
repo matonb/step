@@ -7,7 +7,7 @@ Wants=network-online.target
 StartLimitIntervalSec=30
 StartLimitBurst=3
 ConditionFileNotEmpty=/etc/step-ca/config/ca.json
-ConditionFileNotEmpty={{ step_ca_password_file }}
+ConditionFileNotEmpty={{ ca_server_password_file }}
 
 [Service]
 Type=simple
@@ -15,7 +15,7 @@ User=step
 Group=step
 Environment=STEPPATH=/etc/step-ca
 WorkingDirectory=/etc/step-ca
-ExecStart=/usr/bin/step-ca config/ca.json --password-file {{ step_ca_password_file }}
+ExecStart=/usr/bin/step-ca config/ca.json --password-file {{ ca_server_password_file }}
 ExecReload=/bin/kill --signal HUP $MAINPID
 Restart=on-failure
 RestartSec=5

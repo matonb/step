@@ -1,0 +1,14 @@
+---
+# dnf takes a URL as a name and downloads it, so the same list serves both
+# families; only the asset extension differs (see vars/main.yml).
+#
+# disable_gpg_check comes from a variable rather than being hardcoded here:
+# step_cli_packages is meant to be repointed, and switching signature
+# verification off for someone installing from their own signed repository
+# would be a decision made behind their back.
+- name: Install the step CLI
+  become: true
+  ansible.builtin.dnf:
+    name: "{{ step_cli_packages }}"
+    state: present
+    disable_gpg_check: "{{ step_cli_disable_gpg_check }}"
