@@ -1,0 +1,28 @@
+---
+galaxy_info:
+  author: Brett Maton
+  description: Install step-ca and run it under systemd
+  license: GPL-3.0-or-later
+  # ansible.builtin.systemd_service does not exist before 2.14; the role uses
+  # it for the enable and state tasks and for both handlers.
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+    - name: EL
+      versions:
+        - "9"
+  galaxy_tags:
+    - ca
+    - certificates
+    - pki
+    - security
+    - smallstep
+    - step
+
+dependencies: []
