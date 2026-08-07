@@ -38,10 +38,16 @@
 # Under --check on a host that has never run this role, step_cli's repository
 # tasks wrote nothing either, so apt has no step-ca to report on and the
 # install would fail outright rather than say what it would do. Same shape as
-# the unit-file gate in main.yml.
+# the unit-file gate in main.yml, and the same as step_cli's own install gate -
+# which it has to be. Somebody managing the repository themselves has one that
+# this file cannot find, and without the middle clause --check would answer
+# their play twice over: step_cli reporting on the CLI, this reporting nothing
+# at all about step-ca. "Nothing to do" for a package that is absent is a wrong
+# answer, not a cautious one.
 #
-# The path is written out rather than taken from a step_cli variable, so this
-# file reads on its own.
+# step_cli_manage_repository is in scope because step_cli is a dependency, and
+# Role.get_default_vars merges a dependency's defaults into the dependent
+# role's scope.
 - name: Install step-ca
   become: true
   ansible.builtin.apt:
@@ -49,4 +55,5 @@
     state: present
   when: >-
     not ansible_check_mode
+    or not step_cli_manage_repository | bool
     or ca_server_repository_stat.stat.exists | default(false)
