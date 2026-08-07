@@ -8,7 +8,7 @@
 # and setcap, and util-linux, which brings /usr/bin/kill. That is precisely why
 # install_RedHat.yml has no support-package task, and the suite would notice if
 # it stopped being true - the capabilities task fails outright without setcap,
-# and scenario 9 fails with status=203/EXEC without kill.
+# and scenario 12 fails with status=203/EXEC without kill.
 FROM rockylinux/rockylinux:9
 
 RUN dnf -y install --setopt=install_weak_deps=False \
