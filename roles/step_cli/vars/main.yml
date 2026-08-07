@@ -44,11 +44,7 @@ step_cli_support_packages:
 step_cli_version_separator: >-
   {{ '=' if ansible_facts['os_family'] == 'Debian' else '-' }}
 
-# The more-indented continuation line below is kept literal rather than folded,
-# so a newline survives into the value. Harmless only because it lands inside a
-# Jinja expression, where whitespace is insignificant - do not copy the shape
-# somewhere the newline reaches the output.
 step_cli_package_names:
   - >-
     step-cli{{ (step_cli_version_separator ~ step_cli_version)
-               if step_cli_version else '' }}
+    if step_cli_version else '' }}

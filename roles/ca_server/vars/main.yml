@@ -9,14 +9,10 @@
 ca_server_version_separator: >-
   {{ '=' if ansible_facts['os_family'] == 'Debian' else '-' }}
 
-# The more-indented continuation line below is kept literal rather than folded,
-# so a newline survives into the value. Harmless only because it lands inside a
-# Jinja expression, where whitespace is insignificant - do not copy the shape
-# somewhere the newline reaches the output.
 ca_server_package_names:
   - >-
     step-ca{{ (ca_server_version_separator ~ ca_server_ca_version)
-              if ca_server_ca_version else '' }}
+    if ca_server_ca_version else '' }}
 
 # Debian only, and that asymmetry is the point rather than an omission.
 #
