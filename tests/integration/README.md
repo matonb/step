@@ -57,9 +57,11 @@ the end confirms the CA converges on exactly what `ca.json` holds.
 bash tests/integration/role.sh
 ```
 
-Nine scenarios, run once per OS family — Debian and Rocky 9 — because the two
-install paths diverge: apt's `deb` option against dnf's URL-as-name, different
-support packages, and a GPG decision on one side only. Requires `docker`,
+Ten scenarios, run once per OS family — Debian and Rocky 9. Both roles
+install by package name from one repository, but the plumbing around it still
+diverges: an apt sources file and a keyring against a `yum_repository` stanza,
+support packages on the Debian side only, and a verification switch RedHat
+honours and Debian refuses. Requires `docker`,
 `ansible-playbook` and the `community.docker` collection. A full run takes
 around seven minutes; `STEP_TEST_FAMILIES=debian` halves it while iterating, and
 `STEP_TEST_KEEP` leaves the containers up for inspection.

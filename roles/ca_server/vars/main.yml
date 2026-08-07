@@ -1,79 +1,22 @@
 ---
-# Role-internal. Override ca_server_packages in defaults/main.yml instead of
-# anything here - these exist to build that list, not to be configured.
-
-# ansible_facts['architecture'] -> the architecture upstream names its assets
-# after. Debian and RPM disagree on nearly all of them, so they are mapped
-# separately. Taken from the release assets themselves rather than from a
-# naming convention:
-#   step-ca_0.30.2-1_arm64.deb   vs   step-ca-0.30.2-1.aarch64.rpm
+# Role-internal. Override the variables in defaults/main.yml instead.
 #
-# step-ca publishes no ppc64 or mips assets, so neither map carries them. The
-# step_cli role's maps do, because the CLI does.
-ca_server_deb_architectures:
-  x86_64: amd64
-  aarch64: arm64
-  armv7l: armhf
-  armv6l: armhf6
-  armv5tel: armel
-  i386: i386
-  i686: i386
+# Nothing about the smallstep repository lives here any more - step_cli owns
+# it, and this role depends on step_cli. That is what stopped the two of them
+# rewriting each other's repository file on every run.
 
-ca_server_rpm_architectures:
-  x86_64: x86_64
-  aarch64: aarch64
-  armv7l: armv7hl
-  armv6l: armv6hl
-  armv5tel: armv5tel
-  i386: i386
-  i686: i386
+# apt wants name=version, dnf wants name-version.
+ca_server_version_separator: >-
+  {{ '=' if ansible_facts['os_family'] == 'Debian' else '-' }}
 
-# Fails loudly on an architecture with no mapping rather than building a URL
-# that 404s halfway through a play. Worded as this role's coverage, not as a
-# claim about what upstream publishes, so it stays true if their asset list
-# moves again.
-ca_server_mapping_advice: >-
-  Set ca_server_packages to install from somewhere else.
-
-ca_server_deb_architecture: >-
-  {{ ca_server_deb_architectures[ansible_facts['architecture']]
-     | mandatory('ca_server has no Debian package mapping for '
-                 ~ ansible_facts['architecture'] ~ '. '
-                 ~ ca_server_mapping_advice) }}
-
-ca_server_rpm_architecture: >-
-  {{ ca_server_rpm_architectures[ansible_facts['architecture']]
-     | mandatory('ca_server has no RPM mapping for '
-                 ~ ansible_facts['architecture'] ~ '. '
-                 ~ ca_server_mapping_advice) }}
-
-# The release asset names. The `-1` is upstream's package revision, not part of
-# the version, and it only appears from 0.28.4 onwards -
-# step-ca_0.28.0_amd64.deb carries no revision at all. Pinning a version below
-# that needs ca_server_packages set outright.
-ca_server_release_base: https://github.com/smallstep
-
-ca_server_ca_asset: >-
-  {{ 'step-ca_' ~ ca_server_ca_version
-     ~ '-1_' ~ ca_server_deb_architecture ~ '.deb'
-     if ansible_facts['os_family'] == 'Debian'
-     else 'step-ca-' ~ ca_server_ca_version
-     ~ '-1.' ~ ca_server_rpm_architecture ~ '.rpm' }}
-
-ca_server_cli_asset: >-
-  {{ 'step-cli_' ~ ca_server_cli_version
-     ~ '-1_' ~ ca_server_deb_architecture ~ '.deb'
-     if ansible_facts['os_family'] == 'Debian'
-     else 'step-cli-' ~ ca_server_cli_version
-     ~ '-1.' ~ ca_server_rpm_architecture ~ '.rpm' }}
-
-ca_server_package_urls:
+# The more-indented continuation line below is kept literal rather than folded,
+# so a newline survives into the value. Harmless only because it lands inside a
+# Jinja expression, where whitespace is insignificant - do not copy the shape
+# somewhere the newline reaches the output.
+ca_server_package_names:
   - >-
-    {{ ca_server_release_base }}/certificates/releases/download/v{{
-      ca_server_ca_version }}/{{ ca_server_ca_asset }}
-  - >-
-    {{ ca_server_release_base }}/cli/releases/download/v{{
-      ca_server_cli_version }}/{{ ca_server_cli_asset }}
+    step-ca{{ (ca_server_version_separator ~ ca_server_ca_version)
+              if ca_server_ca_version else '' }}
 
 # Debian only, and that asymmetry is the point rather than an omission.
 #
@@ -88,11 +31,10 @@ ca_server_package_urls:
 # both have to be asked for.
 #
 # EL does not split either one. `rpm -qR systemd` requires libcap.so.2, which
-# only the libcap package provides and which also owns /usr/sbin/getcap, and it
-# requires util-linux, which owns /bin/kill. On a host running systemd - the
-# only kind this role targets - both are already there, so naming them would be
-# a task that can never do anything.
+# only the libcap package provides and which also owns /usr/sbin/getcap; and it
+# requires util-linux, which pulls util-linux-core, which owns /usr/bin/kill.
+# On a host running systemd - the only kind this role targets - both are
+# already there, so naming them would be a task that can never do anything.
 ca_server_support_packages:
-  Debian:
-    - libcap2-bin
-    - procps
+  - libcap2-bin
+  - procps

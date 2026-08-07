@@ -11,8 +11,8 @@ including against a CA that is not running.
 
 | Content | What it is for |
 | ------------------------------ | ---------------------------------------------------------------------- |
-| role `ca_server`               | Install step-ca and the step CLI, and run the CA under systemd         |
-| role `step_cli`                | Install the step CLI on a host that talks to a CA rather than runs one |
+| role `ca_server`               | Install step-ca and run the CA under systemd; pulls in `step_cli`      |
+| role `step_cli`                | Install the step CLI, and own the smallstep package repository        |
 | module `initialize`            | Create the CA, idempotently                                            |
 | module `configure`             | Edit `ca.json` — paths, database, certificate duration claims          |
 | module `provisioner`           | Create, update and remove provisioners                                 |
@@ -470,45 +470,23 @@ irrecoverably.
 
 ### matonb.step.ca_server
 
-Installs step-ca and the step CLI, creates the `step` user, grants the binary
+Installs step-ca, creates the `step` user, grants the binary
 `CAP_NET_BIND_SERVICE` so it can bind 443 without running as root, templates a
-sandboxed systemd unit, and manages the service. The CLI is installed alongside
-the server because `matonb.step.initialize` shells out to `step ca init`, so a
-host that runs this role can initialize and manage its own CA.
+sandboxed systemd unit, and manages the service.
 
-| Variable                    | Default                  | Description                                                                       |
-| --------------------------- | ------------------------ | --------------------------------------------------------------------------------- |
-| `ca_server_ca_version`      | `0.30.2`                 | step-ca release to install                                                        |
-| `ca_server_cli_version`     | `0.30.6`                 | step CLI release to install; versioned separately upstream                        |
-| `ca_server_packages`        | built from the versions  | Package URLs. Replace wholesale to install from elsewhere — see below             |
-| `ca_server_disable_gpg_check` | `true`                 | RedHat only. Upstream signs its RPMs but publishes no importable key              |
-| `ca_server_password_file`   | `/etc/step-ca/password.txt` | File holding the password that decrypts the CA's keys                          |
-| `ca_server_service_enabled` | `true`                   | Whether step-ca comes back after a reboot                                         |
-| `ca_server_service_state`   | `started`                | `started`, `stopped`, `restarted`, `reloaded`, or null to leave the service alone |
+**It depends on `matonb.step.step_cli`**, which Ansible runs first. That role
+owns the smallstep repository and the step CLI, so including `ca_server` alone
+still gives you a host that can initialize and manage its own CA —
+`matonb.step.initialize` shells out to `step ca init`. Configure the repository
+through `step_cli`'s variables, below; there is deliberately only one set.
 
-The package URLs are built from the versions above and the host's architecture,
-which is mapped separately for Debian and RPM because upstream names its assets
-differently (`step-ca_0.30.2-1_arm64.deb` against `step-ca-0.30.2-1.aarch64.rpm`).
-An architecture with no mapping fails with a message rather than a 404 mid-play.
-The `-1` in those names is upstream's package revision and only appears from
-0.28.4 onward, so pinning an older version means setting `ca_server_packages`
-outright.
-
-Replacing `ca_server_packages` works differently per family. On Debian the
-entries go to apt's `deb` option, so each must be a `.deb` path or URL — a
-repository package name will **not** work there. On RedHat they go to dnf as
-`name`, which takes either. Version changes behave differently too: apt compares
-the `.deb`'s version against what is installed and acts on any difference, while
-dnf with `state: present` does nothing if the package is present at all, so
-lowering `ca_server_ca_version` is effective on Debian and a no-op on RedHat.
-
-`ca_server_disable_gpg_check` is `true` because upstream signs its RPMs with a
-key it does not publish anywhere importable — so the default URLs cannot be
-verified. It is a variable rather than a fixed flag precisely so that repointing
-`ca_server_packages` at your own signed repository does not silently switch
-verification off; set it `false` when you do. The Debian path has no equivalent:
-installing a `.deb` by URL never checks a signature, so **HTTPS to GitHub is the
-whole trust boundary** on both families by default.
+| Variable                    | Default                     | Description                                                                       |
+| --------------------------- | --------------------------- | --------------------------------------------------------------------------------- |
+| `ca_server_ca_version`      | latest                      | step-ca version, as the package manager spells it                                 |
+| `ca_server_packages`        | built from the version      | Package names. Replace outright to install from your own repository               |
+| `ca_server_password_file`   | `/etc/step-ca/password.txt` | File holding the password that decrypts the CA's keys                             |
+| `ca_server_service_enabled` | `true`                      | Whether step-ca comes back after a reboot                                         |
+| `ca_server_service_state`   | `started`                   | `started`, `stopped`, `restarted`, `reloaded`, or null to leave the service alone |
 
 **The role does not create the password file.** That is yours to place — it is
 the key to the CA. Until it exists and is non-empty, the service will not start,
@@ -516,14 +494,54 @@ and it must be readable by the `step` user, since that is who step-ca runs as.
 
 ### matonb.step.step_cli
 
-Installs the step CLI and nothing else, for hosts that talk to a CA rather than
-run one. `ca_server` does not need it.
+Installs the step CLI, and owns the smallstep repository both roles install
+from. Use it directly on hosts that talk to a CA rather than run one;
+`ca_server` pulls it in for you.
 
-| Variable             | Default                 | Description                                            |
-| -------------------- | ----------------------- | ------------------------------------------------------ |
-| `step_cli_version`            | `0.30.6`               | Release to install                                                  |
-| `step_cli_packages`           | built from the version | Package URLs. Replace wholesale for a mirror                        |
-| `step_cli_disable_gpg_check`  | `true`                 | RedHat only. Upstream signs its RPMs but publishes no importable key |
+| Variable                        | Default                | Description                                                          |
+| ------------------------------- | ---------------------- | -------------------------------------------------------------------- |
+| `step_cli_version`              | latest                 | Version, as the package manager spells it                            |
+| `step_cli_packages`             | built from the version | Package names. Replace outright for your own repository              |
+| `step_cli_manage_repository`    | `true`                 | Add smallstep's repository. False if you mirror it or define it yourself |
+| `step_cli_repository_gpg_check` | `true`                 | Verify repository metadata signatures. RedHat only — see below       |
+| `step_cli_package_gpg_check`    | `true`                 | Verify package signatures. RedHat only — see below                   |
+
+Packages come from [smallstep's own repositories](https://packages.smallstep.com),
+which carry both `step-ca` and `step-cli` current to the latest release and cover
+every architecture upstream builds for. Installing by name rather than by
+release-asset URL is what lets apt and dnf resolve the architecture, the
+dependencies and the upgrade path themselves.
+
+Leave a version empty for whatever the repository currently holds, or pin it as
+the package manager spells it — Debian wants the package revision (`0.30.2-1`),
+RedHat does not (`0.30.2`). Note that lowering a version is not a downgrade:
+apt refuses one unless explicitly asked, and dnf treats an older package as
+already satisfied. Set the `*_packages` list outright to pin backwards.
+
+### Signature checking
+
+Two things are signed, by two different keys, and both are checked by default.
+
+`step_cli_repository_gpg_check` covers the repository **metadata** — apt's
+`Release`, dnf's `repomd.xml` — which is signed by the key smallstep hosts its
+packages behind.
+
+`step_cli_package_gpg_check` covers the **packages**, which are signed by
+Smallstep Ops, `889B19391F774443`, published at
+`https://packages.smallstep.com/keys/smallstep-0x889B19391F774443.gpg`. The key
+ID in an RPM header is that key's signing subkey, ending `1E43859CB855223C`, so
+the two look unrelated until you import the primary key.
+
+Both are RedHat-only. apt has no per-package signature check; it gets the
+equivalent assurance transitively, from a `Release` file verified against
+`signed-by` and the checksums that file carries.
+
+Turning verification off is RedHat-only. apt has no working equivalent:
+`trusted=yes` leaves it warning `NO_PUBKEY`, and the apt module's cache update —
+unlike `apt-get`, which only warns — treats that as a fetch failure. Rather than
+accept the setting and ignore it, the Debian path fails with a message pointing
+here. Set `step_cli_manage_repository: false` and define the repository yourself
+if you need something else.
 
 ### Service state
 
@@ -599,10 +617,9 @@ The two `password_file` values reference the role's own variable rather than
 repeating the path, so changing `ca_server_password_file` moves both the unit's
 `ConditionFileNotEmpty` and the file the module reads together.
 
-The role is covered by `tests/integration/role.sh`, which drives it through nine
-scenarios against containers running a real systemd — once on Debian and once on
-Rocky 9, since the two install paths diverge. Like the module suite it needs
-docker and is not run by CI.
+Both roles are covered by `tests/integration/role.sh`, which drives them against
+containers running a real systemd — once on Debian and once on Rocky 9. Like the
+module suite it needs docker and is not run by CI.
 
 ## Special Notes
 

@@ -2,8 +2,8 @@
 # Copyright: (c) 2025, Brett Maton <matonb@users.noreply.github.com>
 # GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
 #
-# Runs the ca_server role against containers with a real PID 1 systemd, once
-# per supported OS family.
+# Runs both roles against containers with a real PID 1 systemd, once per
+# supported OS family.
 #
 # The role's design rests on things only systemd can answer: that it skips a
 # unit whose ConditionFileNotEmpty is unmet, that systemctl still exits 0 when
@@ -21,10 +21,11 @@ set -euo pipefail
 
 CA_PASSWORD="integration-test-password"
 
-# family:dockerfile. Both are exercised in full; the role's two install paths
-# diverge enough - apt's `deb` against dnf's URL-as-name, different support
-# packages, a GPG decision on one side only - that testing one proves little
-# about the other.
+# family:dockerfile. Both are exercised in full. The roles install by package
+# name from one repository now, but the plumbing around it still diverges - an
+# apt sources file and a keyring against a yum_repository stanza, support
+# packages on the Debian side only, and a verification switch that RedHat
+# honours and Debian refuses - so testing one proves little about the other.
 FAMILIES=(
     "debian:Dockerfile.debian"
     "redhat:Dockerfile.redhat"
@@ -198,13 +199,28 @@ run_scenarios() {
     in_container test ! -e /etc/systemd/system/step-ca.service ||
         die "check mode wrote the unit file"
 
-    # --- 2: a fresh host --------------------------------------------------
+    # --- 2: a fresh host, through ca_server alone -------------------------
+    # ca_server is applied to a host that has had nothing, so the smallstep
+    # repository and the CLI can only arrive through its dependency on
+    # step_cli. Asserting the CLI here is what makes that dependency load
+    # bearing: with step_cli run first, as this suite used to, removing the
+    # dependency altogether changed nothing and every scenario still passed.
+    #
     # The unit is written and enabled, but nothing starts: no CA and no
     # password file, so systemd's conditions are unmet. The Restart handler
     # still fires and must not fail the play.
-    log "[$family] 2. Fresh host"
+    log "[$family] 2. Fresh host, ca_server alone"
     play role_ca_server.yml
     assert_changed "fresh run"
+    in_container step version >/dev/null 2>&1 ||
+        die "ca_server did not bring in the step CLI - is the step_cli dependency still declared?"
+    if [ "$family" = debian ]; then
+        in_container test -f /etc/apt/sources.list.d/smallstep.list ||
+            die "the smallstep repository was never configured"
+    else
+        in_container test -f /etc/yum.repos.d/smallstep.repo ||
+            die "the smallstep repository was never configured"
+    fi
     assert_handler_ran "Restart step-ca"
     in_container test -f /etc/systemd/system/step-ca.service ||
         die "the unit file was not written"
@@ -212,22 +228,42 @@ run_scenarios() {
     assert_property ConditionResult no "systemd should have refused to start an uninitialized CA"
     assert_property ActiveState inactive "the CA started without a configuration"
 
-    # --- 3: idempotence ---------------------------------------------------
-    log "[$family] 3. Second run changes nothing"
+    # --- 3: step_cli on its own, over the top -----------------------------
+    # Its own assertions - that the CLI runs and that the package manager says
+    # it came from smallstep's repository - plus the case nothing covered while
+    # both roles defined the repository themselves. Each was idempotent against
+    # itself, so the suite stayed green while the file could ping-pong between
+    # them on alternating runs. Only running step_cli after ca_server shows it.
+    log "[$family] 3. step_cli after ca_server changes nothing"
+    play role_step_cli.yml
+    assert_unchanged "step_cli after ca_server"
+    if [ "$family" = debian ]; then
+        lines="$(in_container grep -c '^deb ' /etc/apt/sources.list.d/smallstep.list)"
+        [ "$lines" = "1" ] ||
+            die "the repository was appended to rather than replaced ($lines deb lines)"
+        in_container apt-get update -qq >/dev/null 2>&1 ||
+            die "apt could not read its sources"
+    else
+        in_container dnf -q --refresh makecache >/dev/null 2>&1 ||
+            die "dnf could not read its repositories"
+    fi
+
+    # --- 4: idempotence ---------------------------------------------------
+    log "[$family] 4. Second run changes nothing"
     play role_ca_server.yml
     assert_unchanged "second run"
 
-    # --- 4: check mode on a provisioned host ------------------------------
+    # --- 5: check mode on a provisioned host ------------------------------
     # The systemd tasks are gated on the unit file existing rather than on
     # ansible_check_mode alone, so here they run and report drift.
-    log "[$family] 4. Check mode against a provisioned host"
+    log "[$family] 5. Check mode against a provisioned host"
     play role_ca_server.yml --check
     assert_unchanged "check mode, provisioned"
 
-    # --- 5: check mode with the package installed but no unit -------------
+    # --- 6: check mode with the package installed but no unit -------------
     # Remove the guard and this aborts with "Could not find the requested
     # service step-ca: host".
-    log "[$family] 5. Check mode with no unit file"
+    log "[$family] 6. Check mode with no unit file"
     in_container rm -f /etc/systemd/system/step-ca.service
     in_container systemctl daemon-reload
     play role_ca_server.yml --check
@@ -235,8 +271,8 @@ run_scenarios() {
         die "check mode wrote the unit file"
     play role_ca_server.yml
 
-    # --- 6: the gate opens once the CA exists -----------------------------
-    log "[$family] 6. Service starts once the CA is initialized"
+    # --- 7: the gate opens once the CA exists -----------------------------
+    log "[$family] 7. Service starts once the CA is initialized"
     play role_initialize.yml
     play role_ca_server.yml
     assert_changed "run after initialization"
@@ -245,10 +281,10 @@ run_scenarios() {
         --root /etc/step-ca/certs/root_ca.crt >/dev/null 2>&1 ||
         die "the CA is running but not serving"
 
-    # --- 7: a changed unit re-executes the process ------------------------
+    # --- 8: a changed unit re-executes the process ------------------------
     # The original design used a reload handler here, which leaves a running
     # CA on the old ExecStart. Comparing MainPID is what catches that.
-    log "[$family] 7. A changed unit file restarts the service"
+    log "[$family] 8. A changed unit file restarts the service"
     local pid_before pid_after
     pid_before="$(unit_property MainPID)"
     in_container bash -c 'echo "# hand-edited" >> /etc/systemd/system/step-ca.service'
@@ -261,10 +297,10 @@ run_scenarios() {
     [ "$pid_before" != "$pid_after" ] ||
         die "a changed unit file did not re-execute step-ca (MainPID stayed $pid_before)"
 
-    # --- 8: the password half of the gate ---------------------------------
+    # --- 9: the password half of the gate ---------------------------------
     # systemctl exits 0 when it skips a unit, so without this half the role
     # would report a change every run while the CA never came up.
-    log "[$family] 8. An empty password file closes the gate"
+    log "[$family] 9. An empty password file closes the gate"
     in_container systemctl stop step-ca
     in_container bash -c ": > $PASSWORD_FILE"
     play role_ca_server.yml
@@ -274,8 +310,8 @@ run_scenarios() {
     in_container systemctl start step-ca
     sleep 2
 
-    # --- 9: reload keeps the process --------------------------------------
-    log "[$family] 9. Reload sends SIGHUP without restarting"
+    # --- 10: reload keeps the process --------------------------------------
+    log "[$family] 10. Reload sends SIGHUP without restarting"
     pid_before="$(unit_property MainPID)"
     play role_reload.yml
     # Asserted before the PID comparison: an unchanged PID is also what a

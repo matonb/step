@@ -1,20 +1,36 @@
 ---
-# The step CLI, for a host that talks to a CA rather than runs one. A CA host
-# does not need this role: ca_server installs the CLI itself, because
-# matonb.step.initialize shells out to `step ca init`.
-step_cli_version: "0.30.6"
+# The step CLI, and the smallstep repository both roles install from. ca_server
+# depends on this role rather than repeating any of it.
 
-# Upstream release assets, built from the version above and this host's
-# architecture. Replace the whole list to install from an internal mirror or
-# from your distribution instead.
-step_cli_packages: "{{ step_cli_package_urls }}"
-
-# RedHat only. Upstream signs its RPMs, but does not publish the signing key
-# anywhere importable, so installing the default URLs above means accepting an
-# unverifiable signature.
+# The version as the package manager spells it, or empty for whatever the
+# repository currently holds. Debian wants the package revision - "0.30.6-1" -
+# and RedHat does not - "0.30.6".
 #
-# This is not hardcoded on the task, because step_cli_packages is meant to be
-# repointed: someone installing from their own signed repository would
-# otherwise have verification silently switched off for them. Set it false
-# whenever the packages come from somewhere with a key you trust.
-step_cli_disable_gpg_check: true
+# Lowering a version is not a downgrade: apt refuses one unless asked, and dnf
+# treats an older package as already satisfied. Set step_cli_packages outright
+# to pin backwards.
+step_cli_version: ""
+
+# What to install. Replace outright to name a package from your own repository.
+step_cli_packages: "{{ step_cli_package_names }}"
+
+# Smallstep publishes signed apt and yum repositories carrying step-ca and
+# step-cli. Set this false to leave repository configuration alone entirely -
+# if you mirror them, or define the repository yourself - and the install uses
+# whatever the package manager already knows about.
+step_cli_manage_repository: true
+
+# Whether the repository's metadata signature is verified - apt's Release, and
+# dnf's repomd.xml. Smallstep publishes the key that signs it.
+#
+# Turning this off is RedHat-only. apt has no working equivalent: `trusted=yes`
+# leaves it warning NO_PUBKEY, and the apt module treats that as a fetch
+# failure where apt-get merely warns. install_Debian.yml says so rather than
+# ignoring the request. Use step_cli_manage_repository: false there instead.
+step_cli_repository_gpg_check: true
+
+# Whether the packages themselves are checked against smallstep's signing key,
+# which they publish alongside the repository. RedHat-only: apt has no
+# per-package signature check, and gets the same assurance transitively from a
+# signed Release and the checksums in it.
+step_cli_package_gpg_check: true

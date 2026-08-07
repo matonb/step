@@ -1,4 +1,7 @@
 ---
+# The smallstep repository is already configured: step_cli is a dependency of
+# this role and owns it, along with the step CLI itself. See meta/main.yml.
+
 # Its own task, and deliberately not skipped under --check. The apt module
 # guards cache.update() behind check_mode, so on a host whose package lists
 # were never populated - any container image, among others - a --check run
@@ -17,17 +20,33 @@
   check_mode: false
   changed_when: false
 
-# ansible.builtin.apt rather than ansible.builtin.package: `deb` is an apt
-# option, and package only forwards it by accident of its dispatch.
 - name: Install the tooling the role and unit file need
   become: true
   ansible.builtin.apt:
-    name: "{{ ca_server_support_packages[ansible_facts['os_family']] }}"
+    name: "{{ ca_server_support_packages }}"
     state: present
 
-- name: Install step-ca and the step CLI
+- name: Check whether the smallstep repository is configured
+  become: true
+  ansible.builtin.stat:
+    path: /etc/apt/sources.list.d/smallstep.list
+    get_attributes: false
+    get_checksum: false
+    get_mime: false
+  register: ca_server_repository_stat
+
+# Under --check on a host that has never run this role, step_cli's repository
+# tasks wrote nothing either, so apt has no step-ca to report on and the
+# install would fail outright rather than say what it would do. Same shape as
+# the unit-file gate in main.yml.
+#
+# The path is written out rather than taken from a step_cli variable, so this
+# file reads on its own.
+- name: Install step-ca
   become: true
   ansible.builtin.apt:
-    deb: "{{ item }}"
+    name: "{{ ca_server_packages }}"
     state: present
-  loop: "{{ ca_server_packages }}"
+  when: >-
+    not ansible_check_mode
+    or ca_server_repository_stat.stat.exists | default(false)

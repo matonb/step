@@ -1,9 +1,14 @@
 # The RedHat-family half of the role suite. See Dockerfile.debian for why the
 # suite needs a real PID 1 systemd at all.
 #
-# python3 and sudo are Ansible's requirements, not the role's. Everything the
-# role itself needs - libcap included - is deliberately absent, so a missing
-# dependency fails the suite instead of being masked by the image.
+# python3 and sudo are Ansible's requirements, not the role's.
+#
+# Unlike the Debian image, nothing here is deliberately withheld, because there
+# is nothing to withhold: installing systemd pulls libcap, which owns getcap
+# and setcap, and util-linux, which brings /usr/bin/kill. That is precisely why
+# install_RedHat.yml has no support-package task, and the suite would notice if
+# it stopped being true - the capabilities task fails outright without setcap,
+# and scenario 9 fails with status=203/EXEC without kill.
 FROM rockylinux/rockylinux:9
 
 RUN dnf -y install --setopt=install_weak_deps=False \

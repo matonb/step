@@ -1,9 +1,120 @@
 ---
-# ansible.builtin.apt rather than ansible.builtin.package: `deb` is an apt
-# option, and package only forwards it by accident of its dispatch.
+# Said rather than silently ignored. `trusted=yes` is the only way to tell apt
+# not to verify a repository, and it leaves apt warning NO_PUBKEY - which the
+# apt module's cache update treats as a fetch failure, unlike apt-get, which
+# merely warns. So the request cannot be honoured here, and accepting it
+# quietly would mean someone asking for less verification and silently getting
+# more.
+- name: Repository verification cannot be turned off on Debian
+  ansible.builtin.assert:
+    that:
+      - step_cli_repository_gpg_check | bool
+    fail_msg: >-
+      step_cli_repository_gpg_check is RedHat-only. apt has no working
+      equivalent, so this role always pins the smallstep repository to
+      smallstep's published key. Set step_cli_manage_repository: false and
+      define the repository yourself if you need something else.
+  when: step_cli_manage_repository | bool
+
+# Its own task, and deliberately not skipped under --check. The apt module
+# guards cache.update() behind check_mode, so on a host whose package lists
+# were never populated - any container image, among others - a --check run
+# cannot resolve a package name at all. Refreshing reads from the network and
+# changes no package state, so doing it for real under --check is honest.
+#
+# No cache_valid_time, deliberately. It is judged from the mtime of
+# /var/lib/apt/lists, which a freshly built image has - empty, but recent - so
+# the courtesy of not refreshing turns into never refreshing on exactly the
+# hosts that need it. The suite catches this if it is added back.
+- name: Refresh the apt cache
+  become: true
+  ansible.builtin.apt:
+    update_cache: true
+  check_mode: false
+  changed_when: false
+
+# ca-certificates, because everything below is HTTPS: fetching the signing key,
+# and apt reading an https:// source. A minimal image has neither it nor the
+# tooling ca_server needs, and without it the key fetch fails with a TLS error
+# that says nothing about the cause.
+- name: Install the tooling this role needs
+  become: true
+  ansible.builtin.apt:
+    name: "{{ step_cli_support_packages }}"
+    state: present
+
+- name: Check whether the smallstep repository is configured
+  become: true
+  ansible.builtin.stat:
+    path: "{{ step_cli_repository_list }}"
+    get_attributes: false
+    get_checksum: false
+    get_mime: false
+  register: step_cli_repository_stat
+
+# Gated as a block, because under --check on a host that has never run this
+# role none of it can be evaluated: the ca-certificates install above was
+# simulated, so get_url below would still make a real HTTPS request and fail
+# on an empty trust store. On a host that already has the repository, check
+# mode runs these and reports drift as it should.
+- name: Configure the smallstep repository
+  when:
+    - step_cli_manage_repository | bool
+    - >-
+      not ansible_check_mode
+      or step_cli_repository_stat.stat.exists | default(false)
+  block:
+    - name: Ensure the apt keyring directory
+      become: true
+      ansible.builtin.file:
+        path: "{{ step_cli_repository_keyring | dirname }}"
+        state: directory
+        mode: '0755'
+
+    # The key is served ASCII-armoured, which apt reads straight from a keyring
+    # file - nothing to dearmour, and no deprecated apt-key involved.
+    - name: Install the smallstep repository signing key
+      become: true
+      ansible.builtin.get_url:
+        url: "{{ step_cli_repository_metadata_key_url }}"
+        dest: "{{ step_cli_repository_keyring }}"
+        mode: '0644'
+
+    # Written declaratively rather than through apt_repository, which appends a
+    # line whenever the text differs from what is already there rather than
+    # replacing it.
+    - name: Enable the smallstep apt repository
+      become: true
+      ansible.builtin.copy:
+        content: "{{ step_cli_repository_line }}\n"
+        dest: "{{ step_cli_repository_list }}"
+        owner: root
+        group: root
+        mode: '0644'
+      register: step_cli_repository_written
+
+    # Only when the definition actually changed, and never under --check: copy
+    # reports changed without writing in check mode, so without the second
+    # clause this fires a real apt-get update off a change never made.
+    - name: Refresh the apt cache for the smallstep repository
+      become: true
+      ansible.builtin.apt:
+        update_cache: true
+      check_mode: false
+      changed_when: false
+      when:
+        - not ansible_check_mode
+        - step_cli_repository_written.changed | default(false)
+
+# Under --check on a host that has never run this role the repository is not
+# there, so apt has no step-cli to report on and this would fail outright
+# rather than say what it would do.
 - name: Install the step CLI
   become: true
   ansible.builtin.apt:
-    deb: "{{ item }}"
+    name: "{{ step_cli_packages }}"
     state: present
-  loop: "{{ step_cli_packages }}"
+  when: >-
+    not ansible_check_mode
+    or not step_cli_manage_repository | bool
+    or step_cli_repository_stat.stat.exists | default(false)

@@ -1,33 +1,23 @@
 ---
-# step-ca and the step CLI are released independently upstream, so they get a
-# version each. A CA host needs both: the server to run, and the CLI because
-# matonb.step.initialize shells out to `step ca init`.
-ca_server_ca_version: "0.30.2"
-ca_server_cli_version: "0.30.6"
+# The step-ca version, as the package manager spells it, or empty for whatever
+# the repository currently holds. Debian wants the package revision -
+# "0.30.2-1" - and RedHat does not - "0.30.2".
+#
+# The step CLI has its own variable, step_cli_version, on the role that owns it.
+#
+# Lowering a version is not a downgrade: apt refuses one unless asked, and dnf
+# treats an older package as already satisfied. Set ca_server_packages outright
+# to pin backwards.
+ca_server_ca_version: ""
 
-# Where the password that decrypts the CA's keys lives. The unit refuses to
-# start until this file exists and is non-empty; nothing here creates it,
-# because a password is yours to place.
+# What to install. Built from the version above; replace outright to name a
+# package from your own repository.
+ca_server_packages: "{{ ca_server_package_names }}"
+
+# Where the CA's key password lives. The unit refuses to start until this file
+# exists and is non-empty; nothing here creates it, because a password is yours
+# to place, and it has to be readable by the step user.
 ca_server_password_file: /etc/step-ca/password.txt
-
-# Packages to install, as URLs of upstream release assets. Built from the
-# versions above and this host's architecture (see vars/main.yml).
-#
-# Replace the whole list to install from somewhere else. On Debian these go to
-# apt's `deb` option, so each entry must be a .deb path or URL - a repository
-# package name will not work there. On RedHat they go to dnf as `name`, which
-# takes a URL or a package name.
-ca_server_packages: "{{ ca_server_package_urls }}"
-
-# RedHat only. Upstream signs its RPMs, but does not publish the signing key
-# anywhere importable, so installing the default URLs above means accepting an
-# unverifiable signature.
-#
-# This is not hardcoded on the task, because ca_server_packages is meant to be
-# repointed: someone installing from their own signed repository would
-# otherwise have verification silently switched off for them. Set it false
-# whenever the packages come from somewhere with a key you trust.
-ca_server_disable_gpg_check: true
 
 # Whether step-ca comes back after a reboot.
 ca_server_service_enabled: true

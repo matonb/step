@@ -1,14 +1,39 @@
 ---
-# dnf takes a URL as a name and downloads it, so the same list serves both
-# families; only the asset extension differs (see vars/main.yml).
-#
-# disable_gpg_check comes from a variable rather than being hardcoded here:
-# step_cli_packages is meant to be repointed, and switching signature
-# verification off for someone installing from their own signed repository
-# would be a decision made behind their back.
+# Two keys, because two different things are signed and dnf checks them
+# separately: repo_gpgcheck against the metadata key, gpgcheck against
+# smallstep's package-signing key. Both are published, so both default on.
+- name: Enable the smallstep yum repository
+  become: true
+  ansible.builtin.yum_repository:
+    name: smallstep
+    description: Smallstep
+    baseurl: "{{ step_cli_repository_el_url }}"
+    gpgkey:
+      - "{{ step_cli_repository_el_metadata_key_url }}"
+      - "{{ step_cli_package_key_url }}"
+    repo_gpgcheck: "{{ step_cli_repository_gpg_check }}"
+    gpgcheck: "{{ step_cli_package_gpg_check }}"
+    enabled: true
+    state: present
+  when: step_cli_manage_repository | bool
+
+- name: Check whether the smallstep repository is configured
+  become: true
+  ansible.builtin.stat:
+    path: /etc/yum.repos.d/smallstep.repo
+    get_attributes: false
+    get_checksum: false
+    get_mime: false
+  register: step_cli_repository_stat
+
+# Under --check the repository task above wrote nothing, so dnf has no step-cli
+# to report on and the install would fail rather than say what it would do.
 - name: Install the step CLI
   become: true
   ansible.builtin.dnf:
     name: "{{ step_cli_packages }}"
     state: present
-    disable_gpg_check: "{{ step_cli_disable_gpg_check }}"
+  when: >-
+    not ansible_check_mode
+    or not step_cli_manage_repository | bool
+    or step_cli_repository_stat.stat.exists | default(false)

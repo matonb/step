@@ -1,63 +1,54 @@
 ---
-# Role-internal. Override step_cli_packages in defaults/main.yml instead.
+# Role-internal. Override the variables in defaults/main.yml instead.
+
+# Smallstep's own repositories, which carry step-ca and step-cli current to the
+# latest GitHub release across every architecture upstream builds for.
+# Installing by package name is why neither role needs an architecture map.
+step_cli_repository_debian_url: https://packages.smallstep.com/stable/debian
+step_cli_repository_el_url: https://packages.smallstep.com/stable/el
+step_cli_repository_keyring: /etc/apt/keyrings/smallstep.asc
+step_cli_repository_list: /etc/apt/sources.list.d/smallstep.list
+
+# Two different keys, signing two different things.
 #
-# ansible_facts['architecture'] -> the architecture upstream names its assets
-# after. Debian and RPM disagree on nearly all of them, so they are mapped
-# separately.
-# Taken from the release assets themselves rather than from a naming convention:
-#   step-cli_0.30.6-1_arm64.deb   vs   step-cli-0.30.6-1.aarch64.rpm
-step_cli_deb_architectures:
-  x86_64: amd64
-  aarch64: arm64
-  armv7l: armhf
-  armv6l: armhf6
-  armv5tel: armel
-  ppc64le: ppc64el
-  mips: mips
-  mips64: mips64
-  i386: i386
-  i686: i386
+# The repository metadata - apt's Release, and repomd.xml - is signed by the
+# Artifact Registry key smallstep hosts its packages behind. That is what apt's
+# signed-by needs, and what dnf's repo_gpgcheck checks.
+#
+# The packages themselves are signed by Smallstep Ops, 889B19391F774443. The
+# key ID in an RPM header is its signing subkey, C63EB245365FA07B71068049
+# 1E43859CB855223C, which is why the two look unrelated until you import the
+# primary key and rpm -K starts reporting "digests signatures OK".
+step_cli_repository_metadata_key_url: >-
+  https://packages.smallstep.com/keys/apt/repo-signing-key.gpg
+step_cli_repository_el_metadata_key_url: >-
+  https://packages.smallstep.com/stable/el/repodata/repomd.xml.key
+step_cli_package_key_url: >-
+  https://packages.smallstep.com/keys/smallstep-0x889B19391F774443.gpg
 
-step_cli_rpm_architectures:
-  x86_64: x86_64
-  aarch64: aarch64
-  armv7l: armv7hl
-  armv6l: armv6hl
-  armv5tel: armv5tel
-  ppc64le: ppc64le
-  mips: mips
-  mips64: mips64
-  i386: i386
-  i686: i386
+# Built here rather than inline in the task: a folded scalar keeps a
+# more-indented continuation line literal instead of folding it, which put a
+# newline in the middle of the URI and left apt unable to read its sources.
+step_cli_repository_line: >-
+  deb [signed-by={{ step_cli_repository_keyring }}]
+  {{ step_cli_repository_debian_url }} debs main
 
-# Fails loudly on an architecture that has no mapping rather than building a
-# URL that 404s halfway through a play.
-step_cli_mapping_advice: >-
-  Set step_cli_packages to install from somewhere else.
+# ca-certificates, because everything this role does over the network is HTTPS:
+# fetching the signing key, and apt reading an https:// source. A minimal image
+# has neither, and without it the first real task fails with a TLS error and
+# nothing that points at the cause.
+step_cli_support_packages:
+  - ca-certificates
 
-step_cli_deb_architecture: >-
-  {{ step_cli_deb_architectures[ansible_facts['architecture']]
-     | mandatory('step_cli has no Debian package mapping for '
-                 ~ ansible_facts['architecture'] ~ '. '
-                 ~ step_cli_mapping_advice) }}
+# apt wants name=version, dnf wants name-version.
+step_cli_version_separator: >-
+  {{ '=' if ansible_facts['os_family'] == 'Debian' else '-' }}
 
-step_cli_rpm_architecture: >-
-  {{ step_cli_rpm_architectures[ansible_facts['architecture']]
-     | mandatory('step_cli has no RPM mapping for '
-                 ~ ansible_facts['architecture'] ~ '. '
-                 ~ step_cli_mapping_advice) }}
-
-# The `-1` is upstream's package revision, not part of the version, and it only
-# appears from 0.28.4 onwards. Pinning a version below that needs
-# step_cli_packages set outright.
-step_cli_release_base: https://github.com/smallstep/cli/releases/download
-
-step_cli_asset: >-
-  {{ 'step-cli_' ~ step_cli_version
-     ~ '-1_' ~ step_cli_deb_architecture ~ '.deb'
-     if ansible_facts['os_family'] == 'Debian'
-     else 'step-cli-' ~ step_cli_version
-     ~ '-1.' ~ step_cli_rpm_architecture ~ '.rpm' }}
-
-step_cli_package_urls:
-  - "{{ step_cli_release_base }}/v{{ step_cli_version }}/{{ step_cli_asset }}"
+# The more-indented continuation line below is kept literal rather than folded,
+# so a newline survives into the value. Harmless only because it lands inside a
+# Jinja expression, where whitespace is insignificant - do not copy the shape
+# somewhere the newline reaches the output.
+step_cli_package_names:
+  - >-
+    step-cli{{ (step_cli_version_separator ~ step_cli_version)
+               if step_cli_version else '' }}

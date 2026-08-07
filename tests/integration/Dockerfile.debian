@@ -3,15 +3,16 @@
 # ConditionFileNotEmpty is unmet, and on systemctl's exit code when it skips
 # one. Neither can be observed without systemd actually running.
 #
-# python3 and python3-apt are Ansible's requirements, not the role's; sudo is
-# needed because the role uses `become`. Everything the role itself needs -
-# libcap2-bin included - is deliberately absent, so a missing dependency fails
-# the suite instead of being masked by the image.
+# python3, python3-apt and sudo are Ansible's requirements, not the roles'.
+#
+# Everything the roles themselves need is deliberately absent - libcap2-bin,
+# procps, and ca-certificates, without which the very first thing step_cli does
+# over the network fails with a TLS error. If one of them is dropped from the
+# role, the suite says so rather than the image quietly covering for it.
 FROM debian:bookworm
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates \
         dbus \
         python3 \
         python3-apt \
