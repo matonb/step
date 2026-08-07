@@ -5,13 +5,14 @@
 # it, and this role depends on step_cli. That is what stopped the two of them
 # rewriting each other's repository file on every run.
 
-# apt wants name=version, dnf wants name-version.
-ca_server_version_separator: >-
-  {{ '=' if ansible_facts['os_family'] == 'Debian' else '-' }}
-
+# step_cli_version_separator rather than a copy of it. How a package manager
+# spells a version pin - apt name=version, dnf name-version - is one fact, and
+# it was written out in both roles, so getting it the wrong way round here
+# would have gone unnoticed: nothing pins ca_server_ca_version, so the
+# duplicate never rendered. It is in scope because step_cli is a dependency.
 ca_server_package_names:
   - >-
-    step-ca{{ (ca_server_version_separator ~ ca_server_ca_version)
+    step-ca{{ (step_cli_version_separator ~ ca_server_ca_version)
     if ca_server_ca_version else '' }}
 
 # Debian only, and that asymmetry is the point rather than an omission.

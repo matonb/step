@@ -328,6 +328,23 @@ run_scenarios() {
         "a version that does not exist was accepted - is the pin reaching the package manager?" \
         -e step_cli_version=0.0.1-nonesuch
 
+    # ca_server builds its own package name, from the same separator. Both
+    # roles being pinned here is what stops that construction going untested:
+    # ca_server_ca_version is empty everywhere else, so a broken name would
+    # render to a bare "step-ca" and every scenario would still pass.
+    local installed_ca
+    if [ "$family" = debian ]; then
+        installed_ca="$(in_container dpkg-query -W -f='${Version}' step-ca)"
+    else
+        installed_ca="$(in_container rpm -q --qf '%{VERSION}-%{RELEASE}' step-ca)"
+    fi
+    [ -n "$installed_ca" ] || die "could not read the installed step-ca version"
+    play role_ca_server.yml -e "ca_server_ca_version=$installed_ca"
+    assert_unchanged "ca_server pinned to the version already installed"
+    play_expecting_failure role_ca_server.yml \
+        "a nonexistent step-ca version was accepted - is ca_server's pin reaching the package manager?" \
+        -e ca_server_ca_version=0.0.1-nonesuch
+
     # --- 5: a repository this role does not manage ------------------------
     # step_cli_manage_repository: false means "mine is configured elsewhere".
     # Both install gates stat the path the role would have written, so without
