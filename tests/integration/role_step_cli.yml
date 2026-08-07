@@ -22,21 +22,33 @@
           `step version` did not report a Smallstep CLI:
           {{ step_role_cli_version.stdout }}
 
-    # Asked of the package manager rather than inferred from a file existing.
-    # The previous version of this checked that a repository file was on disk,
-    # which would have passed just as well had the role configured the
-    # repository and then installed the package from somewhere else entirely.
+    # Asked of the package manager rather than inferred from a file existing,
+    # which is what this used to do and which would have passed just as well
+    # had the role configured the repository and installed from elsewhere.
+    #
+    # The two families can answer to different depths, so they are asked
+    # different questions rather than one question that only half works:
+    #
+    #   RedHat  - rpm records the repository a package came from, so
+    #             `%{from_repo}` is provenance in the strict sense.
+    #   Debian  - dpkg records no origin at all. The closest apt has is the
+    #             source list for the *installed* version, which apt-cache
+    #             policy marks with ***. Plain `apt-cache policy step-cli`
+    #             lists every source offering the package at any version and
+    #             so proves nothing; narrowing to the *** block at least
+    #             establishes that smallstep's repository offers exactly the
+    #             version that is installed.
     - name: Ask the package manager where the CLI came from
       become: true
       ansible.builtin.shell:
         cmd: >-
-          {{ "apt-cache policy step-cli"
+          {{ "apt-cache policy step-cli | grep -A2 '^ [*][*][*]'"
              if ansible_facts['os_family'] == 'Debian'
              else "dnf repoquery --installed --qf '%{from_repo}' step-cli" }}
       changed_when: false
       register: step_role_origin
 
-    - name: It was installed from smallstep's repository
+    - name: The installed version is one smallstep's repository provides
       ansible.builtin.assert:
         that:
           - >-
