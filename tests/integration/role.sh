@@ -95,6 +95,18 @@ play() {
         { cat "$WORK/last.log"; die "playbook $book failed"; }
 }
 
+# For the cases where failing is the assertion. Without this, proving that a
+# bad input is rejected would need play() not to die on it.
+play_expecting_failure() {
+    local book=$1 why=$2
+    shift 2
+    if ansible-playbook -i "$WORK/inventory.yml" "$HERE/$book" "$@" \
+        >"$WORK/last.log" 2>&1; then
+        cat "$WORK/last.log"
+        die "$why"
+    fi
+}
+
 # Ansible's recap is the only place the per-run change count is reported, and
 # idempotence is exactly the claim being tested.
 assert_unchanged() {
@@ -253,22 +265,51 @@ run_scenarios() {
             die "dnf could not read its repositories: $refresh"
     fi
 
-    # --- 4: idempotence ---------------------------------------------------
-    log "[$family] 4. Second run changes nothing"
+    # --- 4: version pinning -----------------------------------------------
+    # Both version variables default to empty, so nothing else in this suite
+    # renders the separator at all - apt wants name=version, dnf wants
+    # name-version, and getting it the wrong way round produces "unable to
+    # locate package" rather than anything subtle.
+    #
+    # Pinned to the version already installed, because by this point it is,
+    # and apt refuses a downgrade unless explicitly asked. That still
+    # exercises the thing that can break: the spec has to be one the package
+    # manager understands. The version is read off the host rather than
+    # written here, so this does not need editing when upstream moves.
+    log "[$family] 4. A pinned version is accepted"
+    local installed
+    if [ "$family" = debian ]; then
+        installed="$(in_container dpkg-query -W -f='${Version}' step-cli)"
+    else
+        installed="$(in_container rpm -q --qf '%{VERSION}-%{RELEASE}' step-cli)"
+    fi
+    [ -n "$installed" ] || die "could not read the installed step-cli version"
+    play role_step_cli.yml -e "step_cli_version=$installed"
+    assert_unchanged "pinned to the version already installed"
+
+    # And the pin has to actually reach the package manager. Without this, a
+    # separator that rendered into nothing at all would satisfy the assertion
+    # above by installing the latest version and reporting no change.
+    play_expecting_failure role_step_cli.yml \
+        "a version that does not exist was accepted - is the pin reaching the package manager?" \
+        -e step_cli_version=0.0.1-nonesuch
+
+    # --- 5: idempotence ---------------------------------------------------
+    log "[$family] 5. Second run changes nothing"
     play role_ca_server.yml
     assert_unchanged "second run"
 
-    # --- 5: check mode on a provisioned host ------------------------------
+    # --- 6: check mode on a provisioned host ------------------------------
     # The systemd tasks are gated on the unit file existing rather than on
     # ansible_check_mode alone, so here they run and report drift.
-    log "[$family] 5. Check mode against a provisioned host"
+    log "[$family] 6. Check mode against a provisioned host"
     play role_ca_server.yml --check
     assert_unchanged "check mode, provisioned"
 
-    # --- 6: check mode with the package installed but no unit -------------
+    # --- 7: check mode with the package installed but no unit -------------
     # Remove the guard and this aborts with "Could not find the requested
     # service step-ca: host".
-    log "[$family] 6. Check mode with no unit file"
+    log "[$family] 7. Check mode with no unit file"
     in_container rm -f /etc/systemd/system/step-ca.service
     in_container systemctl daemon-reload
     play role_ca_server.yml --check
@@ -276,8 +317,8 @@ run_scenarios() {
         die "check mode wrote the unit file"
     play role_ca_server.yml
 
-    # --- 7: the gate opens once the CA exists -----------------------------
-    log "[$family] 7. Service starts once the CA is initialized"
+    # --- 8: the gate opens once the CA exists -----------------------------
+    log "[$family] 8. Service starts once the CA is initialized"
     play role_initialize.yml
     play role_ca_server.yml
     assert_changed "run after initialization"
@@ -286,10 +327,10 @@ run_scenarios() {
         --root /etc/step-ca/certs/root_ca.crt >/dev/null 2>&1 ||
         die "the CA is running but not serving"
 
-    # --- 8: a changed unit re-executes the process ------------------------
+    # --- 9: a changed unit re-executes the process ------------------------
     # The original design used a reload handler here, which leaves a running
     # CA on the old ExecStart. Comparing MainPID is what catches that.
-    log "[$family] 8. A changed unit file restarts the service"
+    log "[$family] 9. A changed unit file restarts the service"
     local pid_before pid_after
     pid_before="$(unit_property MainPID)"
     in_container bash -c 'echo "# hand-edited" >> /etc/systemd/system/step-ca.service'
@@ -302,10 +343,10 @@ run_scenarios() {
     [ "$pid_before" != "$pid_after" ] ||
         die "a changed unit file did not re-execute step-ca (MainPID stayed $pid_before)"
 
-    # --- 9: the password half of the gate ---------------------------------
+    # --- 10: the password half of the gate ---------------------------------
     # systemctl exits 0 when it skips a unit, so without this half the role
     # would report a change every run while the CA never came up.
-    log "[$family] 9. An empty password file closes the gate"
+    log "[$family] 10. An empty password file closes the gate"
     in_container systemctl stop step-ca
     in_container bash -c ": > $PASSWORD_FILE"
     play role_ca_server.yml
@@ -315,8 +356,8 @@ run_scenarios() {
     in_container systemctl start step-ca
     sleep 2
 
-    # --- 10: reload keeps the process --------------------------------------
-    log "[$family] 10. Reload sends SIGHUP without restarting"
+    # --- 11: reload keeps the process --------------------------------------
+    log "[$family] 11. Reload sends SIGHUP without restarting"
     pid_before="$(unit_property MainPID)"
     play role_reload.yml
     # Asserted before the PID comparison: an unchanged PID is also what a
