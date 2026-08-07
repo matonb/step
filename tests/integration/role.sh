@@ -237,15 +237,20 @@ run_scenarios() {
     log "[$family] 3. step_cli after ca_server changes nothing"
     play role_step_cli.yml
     assert_unchanged "step_cli after ca_server"
+    local lines refresh
     if [ "$family" = debian ]; then
-        lines="$(in_container grep -c '^deb ' /etc/apt/sources.list.d/smallstep.list)"
+        # `|| true` because grep -c exits 1 on no matches and 2 on a missing
+        # file, and a bare assignment adopts that status - so under `set -e`
+        # the suite would abort on docker's stderr and never reach the die
+        # below. Nought and "file gone" are exactly what this is looking for.
+        lines="$(in_container grep -c '^deb ' /etc/apt/sources.list.d/smallstep.list || true)"
         [ "$lines" = "1" ] ||
-            die "the repository was appended to rather than replaced ($lines deb lines)"
-        in_container apt-get update -qq >/dev/null 2>&1 ||
-            die "apt could not read its sources"
+            die "expected one deb line in the smallstep sources file, found '${lines:-none}'"
+        refresh="$(in_container apt-get update -qq 2>&1)" ||
+            die "apt could not read its sources: $refresh"
     else
-        in_container dnf -q --refresh makecache >/dev/null 2>&1 ||
-            die "dnf could not read its repositories"
+        refresh="$(in_container dnf -q --refresh makecache 2>&1)" ||
+            die "dnf could not read its repositories: $refresh"
     fi
 
     # --- 4: idempotence ---------------------------------------------------
