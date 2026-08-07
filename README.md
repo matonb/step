@@ -532,16 +532,20 @@ Smallstep Ops, `889B19391F774443`, published at
 ID in an RPM header is that key's signing subkey, ending `1E43859CB855223C`, so
 the two look unrelated until you import the primary key.
 
-Both are RedHat-only. apt has no per-package signature check; it gets the
-equivalent assurance transitively, from a `Release` file verified against
-`signed-by` and the checksums that file carries.
+**Both switches are RedHat-only**, and setting either to `false` on a Debian
+host fails the play rather than being quietly ignored.
 
-Turning verification off is RedHat-only. apt has no working equivalent:
-`trusted=yes` leaves it warning `NO_PUBKEY`, and the apt module's cache update —
-unlike `apt-get`, which only warns — treats that as a fetch failure. Rather than
-accept the setting and ignore it, the Debian path fails with a message pointing
-here. Set `step_cli_manage_repository: false` and define the repository yourself
-if you need something else.
+There is no per-package check on Debian to turn off: apt verifies the signed
+`Release` file against the `signed-by` keyring and trusts the checksums it
+carries, which covers the packages transitively. And repository verification
+cannot be disabled either — `trusted=yes` leaves apt warning `NO_PUBKEY`, and
+the apt module's cache update treats that as a fetch failure where `apt-get`
+merely warns.
+
+Accepting a request for less verification and silently giving more would be the
+wrong way round, so the Debian path asserts and points at
+`step_cli_manage_repository: false`, which leaves repository configuration to
+you entirely.
 
 ### Service state
 

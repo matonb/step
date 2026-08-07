@@ -5,15 +5,18 @@
 # merely warns. So the request cannot be honoured here, and accepting it
 # quietly would mean someone asking for less verification and silently getting
 # more.
-- name: Repository verification cannot be turned off on Debian
+- name: Signature verification cannot be turned off on Debian
   ansible.builtin.assert:
     that:
       - step_cli_repository_gpg_check | bool
+      - step_cli_package_gpg_check | bool
     fail_msg: >-
-      step_cli_repository_gpg_check is RedHat-only. apt has no working
-      equivalent, so this role always pins the smallstep repository to
-      smallstep's published key. Set step_cli_manage_repository: false and
-      define the repository yourself if you need something else.
+      step_cli_repository_gpg_check and step_cli_package_gpg_check are both
+      RedHat-only. apt verifies the signed Release file through the signed-by
+      keyring and trusts the checksums it carries, and has no per-package
+      check to turn off; there is no way to ask it for less. Set
+      step_cli_manage_repository: false and define the repository yourself if
+      you need something else.
   when: step_cli_manage_repository | bool
 
 # Its own task, and deliberately not skipped under --check. The apt module
