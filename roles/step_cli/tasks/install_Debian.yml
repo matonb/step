@@ -46,7 +46,7 @@
 - name: Check whether the smallstep repository is configured
   become: true
   ansible.builtin.stat:
-    path: "{{ step_cli_repository_list }}"
+    path: "{{ step_cli_repository_deb_file }}"
     get_attributes: false
     get_checksum: false
     get_mime: false
@@ -87,7 +87,7 @@
       become: true
       ansible.builtin.copy:
         content: "{{ step_cli_repository_line }}\n"
-        dest: "{{ step_cli_repository_list }}"
+        dest: "{{ step_cli_repository_deb_file }}"
         owner: root
         group: root
         mode: '0644'

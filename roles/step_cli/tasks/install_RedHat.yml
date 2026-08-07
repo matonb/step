@@ -5,7 +5,7 @@
 - name: Enable the smallstep yum repository
   become: true
   ansible.builtin.yum_repository:
-    name: smallstep
+    name: "{{ step_cli_repository_name }}"
     description: Smallstep
     baseurl: "{{ step_cli_repository_el_url }}"
     gpgkey:
@@ -20,7 +20,7 @@
 - name: Check whether the smallstep repository is configured
   become: true
   ansible.builtin.stat:
-    path: /etc/yum.repos.d/smallstep.repo
+    path: "{{ step_cli_repository_el_file }}"
     get_attributes: false
     get_checksum: false
     get_mime: false

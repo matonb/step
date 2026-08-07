@@ -79,6 +79,18 @@ print(yaml.safe_load(open('$REPO_ROOT/roles/ca_server/defaults/main.yml'))['ca_s
 ")"
 [ -n "$PASSWORD_FILE" ] || die "could not read ca_server_password_file from the role defaults"
 
+# Likewise the repository id. The directories are facts about apt and dnf, but
+# the name is the role's, and a suite that hardcoded it would keep passing
+# after the role moved the file - which is the drift these paths exist to
+# avoid in the first place.
+REPOSITORY_NAME="$(python3 -c "
+import yaml
+print(yaml.safe_load(open('$REPO_ROOT/roles/step_cli/vars/main.yml'))['step_cli_repository_name'])
+")"
+[ -n "$REPOSITORY_NAME" ] || die "could not read step_cli_repository_name from the role vars"
+DEB_SOURCES="/etc/apt/sources.list.d/$REPOSITORY_NAME.list"
+EL_REPO="/etc/yum.repos.d/$REPOSITORY_NAME.repo"
+
 # The role resolves as matonb.step.ca_server, so the checkout has to be
 # reachable under that path. A symlink is enough for Ansible itself.
 COLLECTIONS="$WORK/collections"
@@ -227,10 +239,10 @@ run_scenarios() {
     in_container step version >/dev/null 2>&1 ||
         die "ca_server did not bring in the step CLI - is the step_cli dependency still declared?"
     if [ "$family" = debian ]; then
-        in_container test -f /etc/apt/sources.list.d/smallstep.list ||
+        in_container test -f "$DEB_SOURCES" ||
             die "the smallstep repository was never configured"
     else
-        in_container test -f /etc/yum.repos.d/smallstep.repo ||
+        in_container test -f "$EL_REPO" ||
             die "the smallstep repository was never configured"
     fi
     assert_handler_ran "Restart step-ca"
@@ -255,7 +267,7 @@ run_scenarios() {
         # file, and a bare assignment adopts that status - so under `set -e`
         # the suite would abort on docker's stderr and never reach the die
         # below. Nought and "file gone" are exactly what this is looking for.
-        lines="$(in_container grep -c '^deb ' /etc/apt/sources.list.d/smallstep.list || true)"
+        lines="$(in_container grep -c '^deb ' "$DEB_SOURCES" || true)"
         [ "$lines" = "1" ] ||
             die "expected one deb line in the smallstep sources file, found '${lines:-none}'"
         refresh="$(in_container apt-get update -qq 2>&1)" ||

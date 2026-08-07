@@ -7,7 +7,20 @@
 step_cli_repository_debian_url: https://packages.smallstep.com/stable/debian
 step_cli_repository_el_url: https://packages.smallstep.com/stable/el
 step_cli_repository_keyring: /etc/apt/keyrings/smallstep.asc
-step_cli_repository_list: /etc/apt/sources.list.d/smallstep.list
+
+# Where the repository definition lands, derived once and read by both roles -
+# ca_server gates its own install on the file being there, and got the path
+# wrong-by-copying until this existed.
+#
+# yum_repository names its file after the repository id, so both come from
+# step_cli_repository_name rather than being written out twice and kept in step
+# by hand. A path that drifts does not fail loudly: the gates just decide the
+# repository is absent and skip the install under --check, for ever.
+step_cli_repository_name: smallstep
+step_cli_repository_deb_file: >-
+  /etc/apt/sources.list.d/{{ step_cli_repository_name }}.list
+step_cli_repository_el_file: >-
+  /etc/yum.repos.d/{{ step_cli_repository_name }}.repo
 
 # Two different keys, signing two different things.
 #
