@@ -154,6 +154,28 @@ assert_handler_ran() {
     esac
 }
 
+# A task silently skipped and a task that ran and found nothing to do both
+# leave the play green, which is exactly the difference some of these gates
+# turn on. Same shape as assert_handler_ran: the banner alone proves only that
+# Ansible reached the task.
+assert_task_ran() {
+    local task=$1 outcome
+    outcome="$(sed 's/\x1b\[[0-9;]*m//g' "$WORK/last.log" |
+        grep -A3 -E "TASK \[matonb\.step\.[a-z_]+ : $task\]" |
+        grep -m1 -oE '^(changed|ok|skipping|fatal):' || true)"
+    case "$outcome" in
+        changed: | ok:) ;;
+        "")
+            cat "$WORK/last.log"
+            die "the '$task' task never appeared"
+            ;;
+        *)
+            cat "$WORK/last.log"
+            die "the '$task' task reported ${outcome%:} rather than running"
+            ;;
+    esac
+}
+
 in_container() { docker exec "$CONTAINER" "$@"; }
 
 unit_property() { in_container systemctl show step-ca -p "$1" --value | tr -d '\r'; }
@@ -306,22 +328,50 @@ run_scenarios() {
         "a version that does not exist was accepted - is the pin reaching the package manager?" \
         -e step_cli_version=0.0.1-nonesuch
 
-    # --- 5: idempotence ---------------------------------------------------
-    log "[$family] 5. Second run changes nothing"
+    # --- 5: a repository this role does not manage ------------------------
+    # step_cli_manage_repository: false means "mine is configured elsewhere".
+    # Both install gates stat the path the role would have written, so without
+    # a clause for the unmanaged case --check answered such a play two ways:
+    # step_cli reporting on the CLI it would install, ca_server silently
+    # skipping step-ca. "Nothing to do" for an absent package is wrong rather
+    # than cautious, and nothing exercised it until this existed.
+    #
+    # The repository is moved rather than removed, so it is still there to
+    # install from - which is the whole point of the setting - and moved back
+    # afterwards so the scenarios below see the host they expect.
+    log "[$family] 5. --check reports on step-ca with an unmanaged repository"
+    local owned
+    if [ "$family" = debian ]; then
+        owned=/etc/apt/sources.list.d/operator-owned.list
+        in_container mv "$DEB_SOURCES" "$owned"
+    else
+        owned=/etc/yum.repos.d/operator-owned.repo
+        in_container mv "$EL_REPO" "$owned"
+    fi
+    play role_ca_server.yml --check -e step_cli_manage_repository=false
+    assert_task_ran "Install step-ca"
+    if [ "$family" = debian ]; then
+        in_container mv "$owned" "$DEB_SOURCES"
+    else
+        in_container mv "$owned" "$EL_REPO"
+    fi
+
+    # --- 6: idempotence ---------------------------------------------------
+    log "[$family] 6. Second run changes nothing"
     play role_ca_server.yml
     assert_unchanged "second run"
 
-    # --- 6: check mode on a provisioned host ------------------------------
+    # --- 7: check mode on a provisioned host ------------------------------
     # The systemd tasks are gated on the unit file existing rather than on
     # ansible_check_mode alone, so here they run and report drift.
-    log "[$family] 6. Check mode against a provisioned host"
+    log "[$family] 7. Check mode against a provisioned host"
     play role_ca_server.yml --check
     assert_unchanged "check mode, provisioned"
 
-    # --- 7: check mode with the package installed but no unit -------------
+    # --- 8: check mode with the package installed but no unit -------------
     # Remove the guard and this aborts with "Could not find the requested
     # service step-ca: host".
-    log "[$family] 7. Check mode with no unit file"
+    log "[$family] 8. Check mode with no unit file"
     in_container rm -f /etc/systemd/system/step-ca.service
     in_container systemctl daemon-reload
     play role_ca_server.yml --check
@@ -329,8 +379,8 @@ run_scenarios() {
         die "check mode wrote the unit file"
     play role_ca_server.yml
 
-    # --- 8: the gate opens once the CA exists -----------------------------
-    log "[$family] 8. Service starts once the CA is initialized"
+    # --- 9: the gate opens once the CA exists -----------------------------
+    log "[$family] 9. Service starts once the CA is initialized"
     play role_initialize.yml
     play role_ca_server.yml
     assert_changed "run after initialization"
@@ -339,10 +389,10 @@ run_scenarios() {
         --root /etc/step-ca/certs/root_ca.crt >/dev/null 2>&1 ||
         die "the CA is running but not serving"
 
-    # --- 9: a changed unit re-executes the process ------------------------
+    # --- 10: a changed unit re-executes the process ------------------------
     # The original design used a reload handler here, which leaves a running
     # CA on the old ExecStart. Comparing MainPID is what catches that.
-    log "[$family] 9. A changed unit file restarts the service"
+    log "[$family] 10. A changed unit file restarts the service"
     local pid_before pid_after
     pid_before="$(unit_property MainPID)"
     in_container bash -c 'echo "# hand-edited" >> /etc/systemd/system/step-ca.service'
@@ -355,10 +405,10 @@ run_scenarios() {
     [ "$pid_before" != "$pid_after" ] ||
         die "a changed unit file did not re-execute step-ca (MainPID stayed $pid_before)"
 
-    # --- 10: the password half of the gate ---------------------------------
+    # --- 11: the password half of the gate ---------------------------------
     # systemctl exits 0 when it skips a unit, so without this half the role
     # would report a change every run while the CA never came up.
-    log "[$family] 10. An empty password file closes the gate"
+    log "[$family] 11. An empty password file closes the gate"
     in_container systemctl stop step-ca
     in_container bash -c ": > $PASSWORD_FILE"
     play role_ca_server.yml
@@ -368,8 +418,8 @@ run_scenarios() {
     in_container systemctl start step-ca
     sleep 2
 
-    # --- 11: reload keeps the process --------------------------------------
-    log "[$family] 11. Reload sends SIGHUP without restarting"
+    # --- 12: reload keeps the process --------------------------------------
+    log "[$family] 12. Reload sends SIGHUP without restarting"
     pid_before="$(unit_property MainPID)"
     play role_reload.yml
     # Asserted before the PID comparison: an unchanged PID is also what a
