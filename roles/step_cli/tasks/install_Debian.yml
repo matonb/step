@@ -85,6 +85,7 @@
         url: "{{ step_cli_repository_metadata_key_url }}"
         dest: "{{ step_cli_repository_keyring }}"
         mode: '0644'
+      register: step_cli_keyring_written
 
     # Written declaratively rather than through apt_repository, which appends a
     # line whenever the text differs from what is already there rather than
@@ -99,11 +100,16 @@
         mode: '0644'
       register: step_cli_repository_written
 
-    # Only when the definition actually changed, and never under --check:
-    # copy reports changed without writing in check mode, so without the first
-    # clause this fires a real apt-get update off a change never made. No
-    # check_mode: false here - the same clause already means it cannot run in
-    # check mode, unlike the unconditional refresh above, which needs it.
+    # Either the definition or the key: apt validates the lists it downloads
+    # against the keyring, so a rotated key needs the same refresh a changed
+    # sources line does. Watching only the sources file left apt serving lists
+    # it had checked against the key before last.
+    #
+    # Never under --check, because copy and get_url both report changed without
+    # writing in check mode - so without the first clause this fires a real
+    # apt-get update off a change never made. No check_mode: false here: that
+    # same clause means it cannot run in check mode anyway, unlike the
+    # unconditional refresh above, which needs it.
     - name: Refresh the apt cache for the smallstep repository
       become: true
       ansible.builtin.apt:
@@ -111,7 +117,9 @@
       changed_when: false
       when:
         - not ansible_check_mode
-        - step_cli_repository_written.changed | default(false)
+        - >-
+          step_cli_repository_written.changed | default(false)
+          or step_cli_keyring_written.changed | default(false)
 
 # Under --check on a host that has never run this role the repository is not
 # there, so apt has no step-cli to report on and this would fail outright
