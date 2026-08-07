@@ -482,7 +482,7 @@ through `step_cli`'s variables, below; there is deliberately only one set.
 
 | Variable                    | Default                     | Description                                                                       |
 | --------------------------- | --------------------------- | --------------------------------------------------------------------------------- |
-| `ca_server_ca_version`      | latest                      | step-ca version, as the package manager spells it                                 |
+| `ca_server_ca_version`      | `""` (latest)               | step-ca version, as the package manager spells it                                 |
 | `ca_server_packages`        | built from the version      | Package names. Replace outright to install from your own repository               |
 | `ca_server_password_file`   | `/etc/step-ca/password.txt` | File holding the password that decrypts the CA's keys                             |
 | `ca_server_service_enabled` | `true`                      | Whether step-ca comes back after a reboot                                         |
@@ -500,7 +500,7 @@ from. Use it directly on hosts that talk to a CA rather than run one;
 
 | Variable                        | Default                | Description                                                          |
 | ------------------------------- | ---------------------- | -------------------------------------------------------------------- |
-| `step_cli_version`              | latest                 | Version, as the package manager spells it                            |
+| `step_cli_version`              | `""` (latest)          | Version, as the package manager spells it                            |
 | `step_cli_packages`             | built from the version | Package names. Replace outright for your own repository              |
 | `step_cli_manage_repository`    | `true`                 | Add smallstep's repository. False if you mirror it or define it yourself |
 | `step_cli_repository_gpg_check` | `true`                 | Verify repository metadata signatures. RedHat only — see below       |

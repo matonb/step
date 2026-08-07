@@ -52,11 +52,17 @@
     get_mime: false
   register: step_cli_repository_stat
 
-# Gated as a block, because under --check on a host that has never run this
-# role none of it can be evaluated: the ca-certificates install above was
-# simulated, so get_url below would still make a real HTTPS request and fail
-# on an empty trust store. On a host that already has the repository, check
-# mode runs these and reports drift as it should.
+# Gated as a block on the repository already being there, which is a wider
+# net than the reason for it. The reason is that under --check on a host that
+# has never run this role the ca-certificates install above was simulated, so
+# get_url below would still make a real HTTPS request and fail on an empty
+# trust store. Testing for the repository rather than for ca-certificates also
+# skips this on a host that happens to have a trust store and no repository -
+# deliberately, because that host cannot report anything useful about the
+# packages either, and one condition is easier to reason about than two.
+#
+# On a host that already has the repository, check mode runs these and reports
+# drift as it should.
 - name: Configure the smallstep repository
   when:
     - step_cli_manage_repository | bool
@@ -93,14 +99,15 @@
         mode: '0644'
       register: step_cli_repository_written
 
-    # Only when the definition actually changed, and never under --check: copy
-    # reports changed without writing in check mode, so without the second
-    # clause this fires a real apt-get update off a change never made.
+    # Only when the definition actually changed, and never under --check:
+    # copy reports changed without writing in check mode, so without the first
+    # clause this fires a real apt-get update off a change never made. No
+    # check_mode: false here - the same clause already means it cannot run in
+    # check mode, unlike the unconditional refresh above, which needs it.
     - name: Refresh the apt cache for the smallstep repository
       become: true
       ansible.builtin.apt:
         update_cache: true
-      check_mode: false
       changed_when: false
       when:
         - not ansible_check_mode
