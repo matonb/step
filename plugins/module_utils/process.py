@@ -344,17 +344,17 @@ def _run_with_timeout(
         return result
 
     finally:
-        # A no-op on every path above: communicate() has set returncode by the
-        # time we arrive, and terminate() skips a process already known to have
-        # died. It earns its place for the paths *not* above - communicate()
-        # raising something other than TimeoutExpired, where the child is still
-        # running and would otherwise be left behind. ProcessLookupError covers
-        # it exiting between that failure and this call, which is why the
-        # handler stays even though the tests cannot reach it.
-        try:
-            process.terminate()
-        except ProcessLookupError:
-            pass
+        # A no-op on every path above, where communicate() has already set
+        # returncode and terminate() skips a process known to have died. It
+        # earns its place for the paths not above: communicate() raising
+        # anything other than TimeoutExpired - a UnicodeDecodeError on invalid
+        # UTF-8 from the child, with text=True - leaves that child running and
+        # this is what reaps it.
+        #
+        # No handler around it. Popen.send_signal polls first, returns early
+        # once returncode is set, and catches ProcessLookupError itself for the
+        # race after that (bpo-40550), so there is nothing left here to catch.
+        process.terminate()
 
 
 # For backward compatibility
