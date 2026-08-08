@@ -83,7 +83,14 @@ def demote_user(username: str):
         raise RuntimeError(f"User '{username}' not found on the system.") from exc
 
     try:
-        # First change GID, then UID to prevent permission issues
+        # Supplementary groups first. setgid and setuid leave the calling
+        # process's own group memberships in place, and the caller here is
+        # root, so without this the command keeps root's groups after the
+        # switch and holds access the target user was never granted.
+        #
+        # Then GID, then UID. Once the UID is no longer root neither of the
+        # first two is permitted, so this order is what makes the drop stick.
+        os.initgroups(username, pw_record.pw_gid)
         os.setgid(pw_record.pw_gid)
         os.setuid(pw_record.pw_uid)
     except OSError as exc:
