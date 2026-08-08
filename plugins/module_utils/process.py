@@ -106,6 +106,26 @@ def demote_user(username: str):
     )
 
 
+def _demotion_hook(username: Optional[str]) -> Optional[Callable[[], None]]:
+    """Build the post-fork hook that drops privileges, or nothing to run.
+
+    Returning None rather than a callable that does nothing matters: preexec_fn
+    runs arbitrary Python between fork and exec and is not thread-safe, so a
+    command with no user to switch to should not carry one at all.
+
+    Args:
+        username: The target system user, or None to run as the current user.
+
+    Returns:
+        A callable for subprocess's preexec_fn, or None when nothing is to be
+        demoted.
+    """
+    if not username:
+        return None
+
+    return lambda: demote_user(username)
+
+
 def _validate_user_switch(username: Optional[str]) -> None:
     """Validate that we can switch to the specified user.
 
@@ -242,7 +262,7 @@ def run_command(
         env=user_env,
         text=text,
         shell=shell,
-        preexec_fn=lambda: demote_user(username) if username else None,
+        preexec_fn=_demotion_hook(username),
     ) as process:
         # Wait for the process to complete
         stdout, stderr = process.communicate()
@@ -293,7 +313,7 @@ def _run_with_timeout(
         stderr=subprocess.PIPE,
         env=env,
         text=text,
-        preexec_fn=lambda: demote_user(username) if username else None,
+        preexec_fn=_demotion_hook(username),
     )
 
     try:
