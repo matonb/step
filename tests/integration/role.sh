@@ -57,7 +57,9 @@ cleanup() {
         echo "    remove with: docker rm -f ${CONTAINERS[*]:-}"
     else
         log "Cleaning up"
-        [ ${#CONTAINERS[@]} -gt 0 ] && docker rm -f "${CONTAINERS[@]}" >/dev/null 2>&1 || true
+        if [ ${#CONTAINERS[@]} -gt 0 ]; then
+            docker rm -f "${CONTAINERS[@]}" >/dev/null 2>&1 || true
+        fi
         rm -rf "$WORK" 2>/dev/null || echo "WARNING: could not remove $WORK" >&2
     fi
     if [ "$status" -eq 0 ]; then log "PASSED"; else log "FAILED (exit $status)"; fi
@@ -164,8 +166,9 @@ play_expecting_failure() {
     # Non-empty as well as present: `grep -qE ""` matches any non-empty file,
     # so an empty pattern is the vacuous assertion this argument exists to
     # prevent, wearing the appearance of a real one.
-    [ $# -ge 3 ] && [ -n "$3" ] ||
+    if [ $# -lt 3 ] || [ -z "$3" ]; then
         die "play_expecting_failure needs a book, a reason and a non-empty pattern"
+    fi
     local book=$1 why=$2 pattern=$3
     shift 3
     if ansible-playbook -i "$WORK/inventory.yml" "$HERE/$book" "$@" \

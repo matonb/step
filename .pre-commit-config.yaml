@@ -37,6 +37,10 @@ repos:
       - id: shellcheck
         name: shellcheck
         description: Lint shell scripts
+        # The same exclusions ansible-test passes, so this hook and the sanity
+        # test disagree about nothing except their shellcheck version - which
+        # they still can, so code here is written to satisfy the older one too.
+        args: [-e, "SC1090,SC1091,SC2028"]
 #
 # Disabled for now - requires more complex configuration for collection metadata
 #  - repo: https://github.com/ansible/ansible-lint
