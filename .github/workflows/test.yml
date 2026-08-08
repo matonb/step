@@ -7,13 +7,19 @@ name: Test (sanity & units)
       - main
   pull_request:
 
-# ansible-core is pinned for the same reason lint.yml pins its hook versions:
-# the sanity test set changes between minors, so an unpinned install lets CI
-# drift ahead of what anyone verified locally and breaks unrelated PRs on
-# checks the gate has never seen. Bump both together, deliberately.
+# Used by the sanity job. ansible-core is pinned for the same reason lint.yml
+# pins its hook versions: the sanity test set changes between minors, so an
+# unpinned install lets CI drift ahead of what anyone verified locally and
+# breaks unrelated PRs on checks the gate has never seen. Bump both together,
+# deliberately - ansible-core 2.20 requires Python >= 3.12, so the Python
+# version and the pin move as a pair.
 #
-# Note that ansible-core 2.20 requires Python >= 3.12, so the Python version
-# and the pin have to move together too.
+# Sanity runs on this one version only, where units run a matrix. That is not
+# an oversight. ansible-test's sanity suite is a moving target: its own pylint
+# and its own rules differ between minors, so an older leg would report on the
+# age of the test set rather than on this collection, and would need silencing
+# to go green. Units run the collection's own tests, which is the thing worth
+# asking an older ansible-core about.
 env:
   ANSIBLE_CORE_VERSION: "2.20.5"
   PYTHON_VERSION: "3.13"
@@ -51,8 +57,30 @@ jobs:
         run: ansible-test sanity --python ${{ env.PYTHON_VERSION }}
 
   units:
-    name: Unit tests
-    runs-on: ubuntu-latest
+    name: Unit tests (ansible-core ${{ matrix.ansible-core }})
+    runs-on: ubuntu-24.04
+
+    # meta/runtime.yml claims requires_ansible '>=2.14'. Testing only the pin
+    # asserted that range at seven-releases' breadth and verified it at one
+    # point. These two legs are the ends of it: what is claimed, and what is
+    # pinned. Versions in between buy little, since nothing claims anything
+    # specific about them, and each costs a job on every push.
+    #
+    # The pairs are not free choices - ansible-core sets a controller Python
+    # floor per release (2.14 needs >=3.9, 2.20 needs >=3.12), so the two move
+    # together or the leg will not install.
+    #
+    # fail-fast off because "does it still work on the floor" and "does it work
+    # on the pin" are separate questions, and the answer to one should not
+    # cancel the other.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ansible-core: "2.14.18"
+            python: "3.11"
+          - ansible-core: "2.20.5"
+            python: "3.13"
 
     steps:
       - name: Checkout into a collection path
@@ -63,17 +91,19 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: ${{ matrix.python }}
 
       - name: Install ansible-core
         run: |
           python -m pip install --upgrade pip
-          pip install "ansible-core==${ANSIBLE_CORE_VERSION}"
+          pip install "ansible-core==${{ matrix.ansible-core }}"
 
       - name: Run unit tests
         working-directory: ansible_collections/matonb/step
         # --requirements installs tests/unit/requirements.txt, which carries
-        # pytest-xdist; ansible-test always invokes pytest with -n.
+        # pytest-xdist; ansible-test always invokes pytest with -n. Older
+        # ansible-test needs it too - without the flag, 2.14 dies with
+        # "unrecognized arguments: --forked -n" rather than running anything.
         run: >-
           ansible-test units
-          --python ${{ env.PYTHON_VERSION }} --requirements
+          --python ${{ matrix.python }} --requirements
