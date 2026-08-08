@@ -27,6 +27,16 @@ repos:
         description: Lint YAML files
         args: [--format, parsable]
         additional_dependencies: [pyyaml]
+
+  # CI runs shellcheck as part of ansible-test sanity, on a runner that has it;
+  # a workstation without it saw that test skipped and the gate pass anyway.
+  # This closes the gap the other way round, so the two agree before a push.
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        name: shellcheck
+        description: Lint shell scripts
 #
 # Disabled for now - requires more complex configuration for collection metadata
 #  - repo: https://github.com/ansible/ansible-lint
