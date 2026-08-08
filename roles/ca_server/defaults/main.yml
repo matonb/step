@@ -1,8 +1,11 @@
 ---
 # The step-ca version, as the package manager spells it, or empty for whatever
-# the repository currently holds. Debian needs the package revision -
-# "0.30.2-1" - while RedHat takes the version on its own - "0.30.2" - and
-# accepts the revision as well.
+# the repository currently holds. Debian needs the upstream version and the
+# Debian revision together - "0.30.2-1" - while RedHat takes the version on its
+# own - "0.30.2" - and accepts version-release too.
+#
+# Empty is not "track the latest": the install is state: present, so this is
+# whatever the repository held when the package first arrived.
 #
 # The step CLI has its own variable, step_cli_version, on the role that owns it.
 #

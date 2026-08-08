@@ -482,7 +482,7 @@ through `step_cli`'s variables, below; there is deliberately only one set.
 
 | Variable                    | Default                     | Description                                                                       |
 | --------------------------- | --------------------------- | --------------------------------------------------------------------------------- |
-| `ca_server_ca_version`      | `""` (latest)               | step-ca version, as the package manager spells it                                 |
+| `ca_server_ca_version`      | `""` (unpinned)             | step-ca version, as the package manager spells it                                 |
 | `ca_server_packages`        | built from the version      | Package names. Replace outright to install from your own repository               |
 | `ca_server_password_file`   | `/etc/step-ca/password.txt` | File holding the password that decrypts the CA's keys                             |
 | `ca_server_service_enabled` | `true`                      | Whether step-ca comes back after a reboot                                         |
@@ -500,24 +500,31 @@ from. Use it directly on hosts that talk to a CA rather than run one;
 
 | Variable                        | Default                | Description                                                          |
 | ------------------------------- | ---------------------- | -------------------------------------------------------------------- |
-| `step_cli_version`              | `""` (latest)          | Version, as the package manager spells it                            |
+| `step_cli_version`              | `""` (unpinned)        | Version, as the package manager spells it                            |
 | `step_cli_packages`             | built from the version | Package names. Replace outright for your own repository              |
 | `step_cli_manage_repository`    | `true`                 | Add smallstep's repository. False if you mirror it or define it yourself |
 | `step_cli_repository_gpg_check` | `true`                 | Verify repository metadata signatures. RedHat only — see below       |
 | `step_cli_package_gpg_check`    | `true`                 | Verify package signatures. RedHat only — see below                   |
 
 Packages come from [smallstep's own repositories](https://packages.smallstep.com),
-which carry both `step-ca` and `step-cli` current to the latest release and cover
-every architecture upstream builds for. Installing by name rather than by
+which carry both `step-ca` and `step-cli` up to the current upstream release and
+cover every architecture upstream builds for. Installing by name rather than by
 release-asset URL is what lets apt and dnf resolve the architecture, the
 dependencies and the upgrade path themselves.
 
 Leave a version empty for whatever the repository currently holds, or pin it as
-the package manager spells it. Debian needs the package revision (`0.30.2-1`);
-RedHat takes the version on its own (`0.30.2`) and will accept the revision
-too. Note that lowering a version is not a downgrade: apt refuses one unless
-explicitly asked, and dnf treats an older package as already satisfied. Set
-the `*_packages` list outright to pin backwards.
+the package manager spells it. Debian needs the upstream version and the Debian
+revision together (`0.30.2-1`); RedHat takes the version on its own (`0.30.2`)
+and will accept version-release (`0.30.2-1`) too. Note that lowering a version is not a
+downgrade: apt refuses one unless explicitly asked, and dnf treats an older
+package as already satisfied. Set the `*_packages` list outright to pin
+backwards.
+
+Left empty, each role installs whatever the repository holds at the time and
+then leaves it alone: the install is `state: present`, not `latest`, so an
+unpinned version is "newest at first install" rather than a version that
+tracks upstream. Upgrading is a matter of raising the pin, or removing it and
+upgrading the package by other means.
 
 ### Signature checking
 
