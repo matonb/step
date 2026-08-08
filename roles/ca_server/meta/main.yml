@@ -1,0 +1,38 @@
+---
+galaxy_info:
+  author: Brett Maton
+  description: Install step-ca and run it under systemd
+  license: GPL-3.0-or-later
+  # ansible.builtin.systemd_service does not exist before 2.14; the role uses
+  # it for the enable and state tasks and for both handlers.
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+    - name: EL
+      versions:
+        - "9"
+  galaxy_tags:
+    - ca
+    - certificates
+    - pki
+    - security
+    - smallstep
+    - step
+
+# step_cli owns the smallstep repository and the step CLI. A CA host needs
+# both: the repository to install step-ca from, and the CLI because
+# matonb.step.initialize shells out to `step ca init`.
+#
+# It is a dependency rather than duplicated here because two roles defining one
+# repository is how they came to fight over the same file - each rewriting the
+# other's copy on every run when their variables disagreed. Ansible runs
+# dependencies before this role's own tasks and once per play, so including
+# ca_server alone still gives a complete CA host.
+dependencies:
+  - role: matonb.step.step_cli

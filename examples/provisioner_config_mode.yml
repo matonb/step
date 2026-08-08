@@ -1,7 +1,7 @@
 ---
 # Managing provisioners on a CA that keeps them in ca.json.
 #
-# This is the default: any CA not initialised with --remote-management. The
+# This is the default: any CA not initialized with --remote-management. The
 # module edits ca.json in place, so step-ca has to reload before the change is
 # live. That is what restart_required reports, and why every changing task
 # notifies a handler rather than reloading inline - a play adding three
@@ -15,8 +15,12 @@
     step_ca_path: /etc/step-ca
     step_ca_user: step
 
+  # The ca_server role ships this handler. It is repeated here because these
+  # playbooks stand alone; a play that includes the role should delete it,
+  # since a play-level handler of the same name shadows the role's.
   handlers:
     - name: Reload step-ca
+      become: true
       ansible.builtin.systemd_service:
         name: step-ca
         state: reloaded

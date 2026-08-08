@@ -1,7 +1,48 @@
 ---
-- name: Install package.
+# step_cli is a dependency of this role and runs first, so by the time
+# anything here executes the smallstep repository is configured and the apt
+# cache is refreshed. See meta/main.yml.
+#
+# This file used to refresh the cache itself, with a comment explaining that
+# --check could not otherwise resolve libcap2-bin on a host whose package
+# lists were never populated. True when both roles stood alone; not any more.
+# step_cli's copy is unconditional and carries check_mode: false, so it covers
+# that case for both of them, and a second refresh here was one the suite could
+# never have made fail.
+- name: Install the tooling the role and unit file need
   become: true
-  ansible.builtin.package:
-    deb: "{{ item }}"
+  ansible.builtin.apt:
+    name: "{{ ca_server_support_packages }}"
     state: present
-  loop: "{{ step_ca_packages }}"
+
+- name: Check whether the smallstep repository is configured
+  become: true
+  ansible.builtin.stat:
+    path: "{{ step_cli_repository_deb_file }}"
+    get_attributes: false
+    get_checksum: false
+    get_mime: false
+  register: ca_server_repository_stat
+
+# Under --check on a host that has never run this role, step_cli's repository
+# tasks wrote nothing either, so apt has no step-ca to report on and the
+# install would fail outright rather than say what it would do. Same shape as
+# the unit-file gate in main.yml, and the same as step_cli's own install gate -
+# which it has to be. Somebody managing the repository themselves has one that
+# this file cannot find, and without the middle clause --check would answer
+# their play twice over: step_cli reporting on the CLI, this reporting nothing
+# at all about step-ca. "Nothing to do" for a package that is absent is a wrong
+# answer, not a cautious one.
+#
+# step_cli_manage_repository is in scope because step_cli is a dependency, and
+# Role.get_default_vars merges a dependency's defaults into the dependent
+# role's scope.
+- name: Install step-ca
+  become: true
+  ansible.builtin.apt:
+    name: "{{ ca_server_packages }}"
+    state: present
+  when: >-
+    not ansible_check_mode
+    or not step_cli_manage_repository | bool
+    or ca_server_repository_stat.stat.exists | default(false)

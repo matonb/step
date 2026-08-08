@@ -7,7 +7,7 @@ CLI decides which by probing the CA rather than by taking a flag:
 
 - **Config mode** - provisioners live in C(ca.json). The CLI edits the file in
   place and the CA only picks the change up on SIGHUP or restart.
-- **Admin mode** - the CA was initialised with C(--remote-management), so
+- **Admin mode** - the CA was initialized with C(--remote-management), so
   provisioners live in the CA database and are changed through the
   authenticated Admin API. Changes take effect immediately.
 

@@ -1,0 +1,26 @@
+---
+galaxy_info:
+  author: Brett Maton
+  description: Install the SmallStep step CLI
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+    - name: EL
+      versions:
+        - "9"
+  galaxy_tags:
+    - certificates
+    - cli
+    - pki
+    - security
+    - smallstep
+    - step
+
+dependencies: []

@@ -1,0 +1,40 @@
+---
+# The step-ca version, as the package manager spells it, or empty for whatever
+# the repository currently holds. Debian needs the upstream version and the
+# Debian revision together - "0.30.2-1" - while RedHat takes the version on its
+# own - "0.30.2" - and accepts version-release too.
+#
+# Empty is not "track the latest": the install is state: present, so this is
+# whatever the repository held when the package first arrived.
+#
+# The step CLI has its own variable, step_cli_version, on the role that owns it.
+#
+# Lowering a version is not a downgrade: apt refuses one unless asked, and dnf
+# treats an older package as already satisfied. Set ca_server_packages outright
+# to pin backwards.
+ca_server_ca_version: ""
+
+# What to install. Built from the version above; replace outright to name a
+# package from your own repository.
+ca_server_packages: "{{ ca_server_package_names }}"
+
+# Where the CA's key password lives. The unit refuses to start until this file
+# exists and is non-empty; nothing here creates it, because a password is yours
+# to place, and it has to be readable by the step user.
+ca_server_password_file: /etc/step-ca/password.txt
+
+# Whether step-ca comes back after a reboot.
+ca_server_service_enabled: true
+
+# What to do with the running service, in the same vocabulary as
+# ansible.builtin.systemd_service: started, stopped, restarted or reloaded.
+# Set to null to leave the service alone entirely.
+#
+# Only applied once both files the unit's ConditionFileNotEmpty directives name
+# are in place and non-empty: config/ca.json and ca_server_password_file. Before
+# that there is nothing to run, and systemd would skip the start with a zero
+# exit while Ansible still reported a change on every run.
+#
+# `started` is the idempotent choice. `restarted` and `reloaded` act every run
+# by design, and report changed every run with it.
+ca_server_service_state: started

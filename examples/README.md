@@ -8,7 +8,7 @@ match your deployment.
 | Playbook | Shows |
 | --- | --- |
 | [`provisioner_config_mode.yml`](provisioner_config_mode.yml) | The default CA, which keeps provisioners in `ca.json`. Adding, removing, capturing a generated password, and the `notify` handler that `restart_required` exists to drive. |
-| [`provisioner_admin_mode.yml`](provisioner_admin_mode.yml) | A CA initialised with `--remote-management`. Both credential forms, and why changes need no reload. |
+| [`provisioner_admin_mode.yml`](provisioner_admin_mode.yml) | A CA initialized with `--remote-management`. Both credential forms, and why changes need no reload. |
 | [`provisioner_reconcile.yml`](provisioner_reconcile.yml) | Declaring `x509_*` durations once and letting re-runs put them back if they drift. |
 
 ## Which mode am I in?

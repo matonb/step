@@ -1,15 +1,30 @@
 # Step CA Ansible Collection
 
-Ansible module for managing [Step CA](https://smallstep.com/docs/step-ca) server configuration and provisioners.
+Ansible collection for installing and managing a [Step CA](https://smallstep.com/docs/step-ca) certificate authority.
 
 ## Description
 
-This module allows you to create, remove, and filter provisioners within a Step CA environment. It provides support for configuring X509 certificate duration parameters and handles service restart requirements when changes are made.
+Four modules and two roles. The roles install step-ca and the step CLI and run
+the CA under systemd; the modules initialize it, edit its configuration, and
+create, update and remove provisioners — in both of step-ca's management modes,
+including against a CA that is not running.
+
+| Content | What it is for |
+| ------------------------------ | ---------------------------------------------------------------------- |
+| role `ca_server`               | Install step-ca and run the CA under systemd; pulls in `step_cli`      |
+| role `step_cli`                | Install the step CLI, and own the smallstep package repository        |
+| module `initialize`            | Create the CA, idempotently                                            |
+| module `configure`             | Edit `ca.json` — paths, database, certificate duration claims          |
+| module `provisioner`           | Create, update and remove provisioners                                 |
+| module `bootstrap`             | Read a step-ca JSON configuration file, such as `defaults.json`        |
 
 ## Requirements
 
-- Ansible 2.9 or higher
-- Step CA installed on the target host
+- ansible-core 2.14 or higher — the roles use `ansible.builtin.systemd_service`,
+  which does not exist before it
+- `community.general`, for the `capabilities` module the `ca_server` role uses
+- A Debian- or RedHat-family target, for the roles. The modules work anywhere
+  step-ca does
 - Appropriate permissions to manage Step CA
 
 ---
@@ -23,7 +38,7 @@ Modify Step CA configuration JSON file (ca.json). Supports top-level parameters 
 The file is only rewritten when a requested setting differs from what it already
 holds, so `changed` is accurate and a `notify` handler fires only on a real
 change. Durations are compared as durations rather than as text — step
-renormalises `8760h` to `8760h0m0s` when it rewrites `ca.json`, and that is not
+renormalizes `8760h` to `8760h0m0s` when it rewrites `ca.json`, and that is not
 treated as a change. Settings this module does not manage are left untouched.
 
 The file is replaced atomically — written alongside, flushed, and moved into
@@ -52,10 +67,17 @@ neither. A symlinked `json_path` is followed rather than replaced. Set
 
 `json_path` must already exist unless `create: true`. A path that is not there
 is far more often a typo than a request to build a CA configuration from
-nothing, and the old behaviour — writing a new, nearly empty file and reporting
+nothing, and the old behavior — writing a new, nearly empty file and reporting
 success — left the real CA untouched with the play still green.
 
 ### Examples
+
+The `ca_server` role ships the `Reload step-ca` handler these tasks notify, so a
+play that includes the role needs no handler of its own; a play using the
+modules alone still does, as the [examples](examples/) show. It sends SIGHUP via
+the unit's `ExecReload`, which is what a `ca.json` change needs. When the service
+is not running it starts it instead — though systemd will skip that start until
+both `config/ca.json` and the password file exist, which the unit requires.
 
 ```yaml
 # Set certificate duration limits
@@ -64,7 +86,7 @@ success — left the real CA untouched with the play still green.
     default_tls_cert_duration: "720h" # 30 days
     json_path: /etc/step-ca/config/ca.json
     max_tls_cert_duration: "8760h" # 1 year
-  notify: restart step-ca
+  notify: Reload step-ca
 
 # Update database path
 - name: Configure database
@@ -139,7 +161,7 @@ by probing the CA rather than by taking a flag.
 | `config` | `ca.json`            | editing the file | `true`             |
 | `admin`  | the CA database      | the Admin API    | `false`            |
 
-A CA is in admin mode when it was initialised with `remote_management: true`,
+A CA is in admin mode when it was initialized with `remote_management: true`,
 which sets `authority.enableAdmin` in `ca.json`. With `management_mode: auto`
 (the default) the module reads that setting and follows it — the same field
 step-ca itself reads, so this detects the mode rather than inferring it. If
@@ -199,7 +221,7 @@ would prompt for one, so `admin_password_file` is rejected alongside
 
 ### Upgrading from 1.0.x
 
-Three behaviours changed for existing config-mode users:
+Three behaviors changed for existing config-mode users:
 
 - **Existing provisioners are now reconciled.** Previously `state: present` on a
   provisioner that already existed was a no-op. It now compares the `x509_*`
@@ -296,7 +318,7 @@ X509 duration parameters accept time units as follows:
 | Key                  | Type    | Description                                                                                    |
 | -------------------- | ------- | ---------------------------------------------------------------------------------------------- |
 | `changed`            | boolean | Whether any changes were made                                                                  |
-| `generated_password` | string  | The generated provisioner password, returned only when the module invented one                 |
+| `generated_password` | string  | Returned if the provisioner password was generated, not provided                               |
 | `management_mode`    | string  | The mode used, `admin` or `config`                                                             |
 | `name`               | string  | The name of the provisioner being managed                                                      |
 | `provisioners`       | list    | List of provisioners that matched the specified name and (optional) type                       |
@@ -388,6 +410,238 @@ configuration when one was found.
 `my-provisioner` exists. A provisioner of that name but another type reports as
 missing — and a non-check run of the same task would then try to create it, which
 step refuses.
+
+---
+
+## matonb.step.initialize
+
+Running against a CA that is already there reports `ok` and changes nothing, so
+a play containing the task can be re-run.
+
+What counts as "already there" is decided by the CA, not by a list of filenames
+in the module. `config/ca.json` has to parse, and every file it names — `root`,
+`crt`, `key`, `federatedRoots`, the `ssh` host and user keys, and an RA's
+`credentialsFile` — has to be present and non-empty. Relative entries are
+resolved against `path`; entries carrying a URI scheme are not paths on this
+host and are skipped, so a KMS-backed CA whose `key` is
+`azurekms:name=…;vault=…` is judged on the files it does name.
+
+That matters because there is no one file set. A registration authority proxies
+signing upstream and owns no root key; a `linked` deployment keeps its keys with
+Certificate Manager. Both are complete CAs with a fraction of a standalone CA's
+files, and both are now recognized without the module having to know what they
+write. It also means a CA whose **root key is kept offline** — best practice,
+since step-ca signs with the intermediate — reports `ok` rather than looking
+half-built.
+
+`config/defaults.json` is deliberately not part of the test. step-ca itself is
+started with `ca.json` and never reads it, so a CA without it is initialized and
+working. It is not worthless though — it carries the `ca_url` and `root`
+defaults the `step` CLI and `matonb.step.provisioner` fall back on — so a CA
+reported `ok` without it can still fail a later task that relies on those.
+Restore the file; do not reinitialize the CA for it.
+
+The `templates` block written by `ssh: true` is also excluded. Those files are
+real, but leaving them out errs towards calling a CA complete, and erring the
+other way is what made this module unusable for RA and linked deployments.
+
+The ways of being unfinished are reported differently:
+
+| Situation | Behavior |
+| --- | --- |
+| `ca.json` will not parse, or a file it names cannot be read | Fails, and points at the file and at `become`/`run_as`. A reading problem is not a CA problem, so `force` is **not** suggested |
+| Files the config names are missing or empty | Fails, naming them. Restore them, or `force` to start again |
+
+That distinction matters in practice: running the task as the wrong user makes
+key material unreadable, and answering that with `force` would delete a healthy
+root key over a file mode.
+
+`pki: true` is the exception. `step ca init --pki` writes no `ca.json` to
+consult, so there the certificates and keys a PKI has are checked directly.
+
+`force: true` deletes the files `step ca init` creates — which is not
+necessarily every file a given deployment has. It is a way to start again, not a
+way to clear up after an arbitrary configuration, and it destroys the root key
+irrecoverably.
+
+---
+
+## Roles
+
+### matonb.step.ca_server
+
+Installs step-ca, creates the `step` user, grants the binary
+`CAP_NET_BIND_SERVICE` so it can bind 443 without running as root, templates a
+sandboxed systemd unit, and manages the service.
+
+**It depends on `matonb.step.step_cli`**, which Ansible runs first. That role
+owns the smallstep repository and the step CLI, so including `ca_server` alone
+still gives you a host that can initialize and manage its own CA —
+`matonb.step.initialize` shells out to `step ca init`. Configure the repository
+through `step_cli`'s variables, below; there is deliberately only one set.
+
+| Variable                    | Default                     | Description                                                                       |
+| --------------------------- | --------------------------- | --------------------------------------------------------------------------------- |
+| `ca_server_ca_version`      | `""` (unpinned)             | step-ca version, as the package manager spells it                                 |
+| `ca_server_packages`        | built from the version      | Package names. Replace outright to install from your own repository               |
+| `ca_server_password_file`   | `/etc/step-ca/password.txt` | File holding the password that decrypts the CA's keys                             |
+| `ca_server_service_enabled` | `true`                      | Whether step-ca comes back after a reboot                                         |
+| `ca_server_service_state`   | `started`                   | `started`, `stopped`, `restarted`, `reloaded`, or null to leave the service alone |
+
+**The role does not create the password file.** That is yours to place — it is
+the key to the CA. Until it exists and is non-empty, the service will not start,
+and it must be readable by the `step` user, since that is who step-ca runs as.
+
+### matonb.step.step_cli
+
+Installs the step CLI, and owns the smallstep repository both roles install
+from. Use it directly on hosts that talk to a CA rather than run one;
+`ca_server` pulls it in for you.
+
+| Variable                        | Default                | Description                                                          |
+| ------------------------------- | ---------------------- | -------------------------------------------------------------------- |
+| `step_cli_version`              | `""` (unpinned)        | Version, as the package manager spells it                            |
+| `step_cli_packages`             | built from the version | Package names. Replace outright for your own repository              |
+| `step_cli_manage_repository`    | `true`                 | Add smallstep's repository. False if you mirror it or define it yourself |
+| `step_cli_repository_gpg_check` | `true`                 | Verify repository metadata signatures. RedHat only — see below       |
+| `step_cli_package_gpg_check`    | `true`                 | Verify package signatures. RedHat only — see below                   |
+
+Packages come from [smallstep's own repositories](https://packages.smallstep.com),
+which carry both `step-ca` and `step-cli` up to the current upstream release and
+cover every architecture upstream builds for. Installing by name rather than by
+release-asset URL is what lets apt and dnf resolve the architecture, the
+dependencies and the upgrade path themselves.
+
+Leave a version empty for whatever the repository currently holds, or pin it as
+the package manager spells it. Debian needs the upstream version and the Debian
+revision together (`0.30.2-1`); RedHat takes the version on its own (`0.30.2`)
+and will accept version-release (`0.30.2-1`) too. Note that lowering a version is not a
+downgrade: apt refuses one unless explicitly asked, and dnf treats an older
+package as already satisfied. Set the `*_packages` list outright to pin
+backwards.
+
+Left empty, each role installs whatever the repository holds at the time and
+then leaves it alone: the install is `state: present`, not `latest`, so an
+unpinned version is "newest at first install" rather than a version that
+tracks upstream. Upgrading is a matter of raising the pin, or removing it and
+upgrading the package by other means.
+
+### Signature checking
+
+Two things are signed, by two different keys, and both are checked by default.
+
+`step_cli_repository_gpg_check` covers the repository **metadata** — apt's
+`Release`, dnf's `repomd.xml` — which is signed by the key smallstep hosts its
+packages behind.
+
+`step_cli_package_gpg_check` covers the **packages**, which are signed by
+Smallstep Ops, `889B19391F774443`, published at
+`https://packages.smallstep.com/keys/smallstep-0x889B19391F774443.gpg`. The key
+ID in an RPM header is that key's signing subkey, ending `1E43859CB855223C`, so
+the two look unrelated until you import the primary key.
+
+**Both switches are RedHat-only**, and setting either to `false` on a Debian
+host fails the play rather than being quietly ignored.
+
+There is no per-package check on Debian to turn off: apt verifies the signed
+`Release` file against the `signed-by` keyring and trusts the checksums it
+carries, which covers the packages transitively. And repository verification
+cannot be disabled either — `trusted=yes` leaves apt warning `NO_PUBKEY`, and
+the apt module's cache update treats that as a fetch failure where `apt-get`
+merely warns.
+
+Accepting a request for less verification and silently giving more would be the
+wrong way round, so the Debian path asserts and points at
+`step_cli_manage_repository: false`, which leaves repository configuration to
+you entirely.
+
+### Service state
+
+`started` is the idempotent choice. `restarted` and `reloaded` act on every run
+by design, so they also report `changed` on every run — that is the option
+working, not a bug.
+
+`ca_server_service_state` is applied only once both files the unit's
+`ConditionFileNotEmpty` directives name are present and non-empty:
+`config/ca.json` and `ca_server_password_file`. Before that there is nothing to
+run, and systemd would skip the start with a zero exit while Ansible reported a
+change on every run — success on a service that never came up.
+
+Both are checked while the role runs, so a CA initialized later in the same play
+is not seen until the next one. On a first run that does not matter: the unit
+file is new, so `Restart step-ca` fires at the end of the play and starts the CA.
+It only shows up when the unit is unchanged *and* the CA is initialized in the
+same play — a retry after a failed `initialize`, for instance — where the service
+comes up one run late.
+
+### Handlers
+
+`Restart step-ca` is notified by the unit file itself, because a changed unit
+needs the process re-executed — a reload would leave the running CA on the old
+`ExecStart`. `Reload step-ca` sends SIGHUP via the unit's `ExecReload` and is
+what the `configure` and `provisioner` tasks should notify.
+
+Both handlers, and the two systemd tasks, are skipped under `--check` on a host
+with no unit file yet. `systemd_service` refuses a unit it cannot find before it
+honours check mode, so the play would otherwise abort rather than report what it
+would do. On a host that has already run the role, `--check` reports drift
+normally.
+
+A first `--check` against a host that has never run these roles is worth
+reading with that in mind. Neither family can report on `step-ca` or `step-cli`,
+because the repository they come from does not exist yet and the package manager
+has nothing to answer with — the alternative is failing outright, which says
+less. The two differ in one detail: RedHat reports that it would write the
+repository file, Debian does not, because installing the signing key means a
+network fetch that check mode cannot honestly simulate against a trust store the
+same run has only pretended to install. Run once for real, and `--check`
+reports drift on everything thereafter.
+
+### Example
+
+```yaml
+- name: Build a CA
+  hosts: ca
+  roles:
+    - matonb.step.ca_server
+
+  tasks:
+    - name: Install the CA password
+      become: true
+      ansible.builtin.copy:
+        content: "{{ vaulted_ca_password }}\n"
+        dest: "{{ ca_server_password_file }}"
+        owner: step
+        group: step
+        mode: '0600'
+
+    - name: Initialize the CA
+      become: true
+      become_user: step
+      matonb.step.initialize:
+        name: Example CA
+        path: /etc/step-ca
+        dns: [ca.example.com]
+        address: ":443"
+        password_file: "{{ ca_server_password_file }}"
+        provisioner_password_file: "{{ ca_server_password_file }}"
+
+    # The role's service task ran before the CA existed, so it skipped. Without
+    # this the CA is only started by the next run of the play.
+    - name: Start the CA now that it has a configuration
+      become: true
+      ansible.builtin.systemd_service:
+        name: step-ca
+        state: started
+```
+
+The two `password_file` values reference the role's own variable rather than
+repeating the path, so changing `ca_server_password_file` moves both the unit's
+`ConditionFileNotEmpty` and the file the module reads together.
+
+Both roles are covered by `tests/integration/role.sh`, which drives them against
+containers running a real systemd — once on Debian and once on Rocky 9. Like the
+module suite it needs docker and is not run by CI.
 
 ## Special Notes
 

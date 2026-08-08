@@ -1,0 +1,48 @@
+---
+# Two keys, because two different things are signed and dnf checks them
+# separately: repo_gpgcheck against the metadata key, gpgcheck against
+# smallstep's package-signing key. Both are published, so both default on.
+#
+# Ungated, unlike the Debian equivalent, which sits behind a block that check
+# mode skips on a host that has never run this role. The difference is real and
+# intended: this task composes a file and fetches nothing, so under --check it
+# reports what it would write and costs nothing, where Debian's key fetch would
+# reach the network against a trust store that is itself only simulated. See
+# install_Debian.yml for the whole of it. The consequence is that --check on a
+# fresh host mentions the repository here and not there; neither can say
+# anything about the packages, which is the part that matters.
+- name: Enable the smallstep yum repository
+  become: true
+  ansible.builtin.yum_repository:
+    name: "{{ step_cli_repository_name }}"
+    description: Smallstep
+    baseurl: "{{ step_cli_repository_el_url }}"
+    gpgkey:
+      - "{{ step_cli_repository_el_metadata_key_url }}"
+      - "{{ step_cli_package_key_url }}"
+    repo_gpgcheck: "{{ step_cli_repository_gpg_check }}"
+    gpgcheck: "{{ step_cli_package_gpg_check }}"
+    enabled: true
+    state: present
+  when: step_cli_manage_repository | bool
+
+- name: Check whether the smallstep repository is configured
+  become: true
+  ansible.builtin.stat:
+    path: "{{ step_cli_repository_el_file }}"
+    get_attributes: false
+    get_checksum: false
+    get_mime: false
+  register: step_cli_repository_stat
+
+# Under --check the repository task above wrote nothing, so dnf has no step-cli
+# to report on and the install would fail rather than say what it would do.
+- name: Install the step CLI
+  become: true
+  ansible.builtin.dnf:
+    name: "{{ step_cli_packages }}"
+    state: present
+  when: >-
+    not ansible_check_mode
+    or not step_cli_manage_repository | bool
+    or step_cli_repository_stat.stat.exists | default(false)

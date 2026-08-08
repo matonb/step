@@ -18,7 +18,7 @@ ADMIN_PORT="${STEP_TEST_ADMIN_PORT:-9101}"
 CONFIG_PORT="${STEP_TEST_CONFIG_PORT:-9102}"
 CA_PASSWORD="integration-test-password"
 # Per-run volume name. A surviving volume would make the next run's CA come up
-# already initialised, silently ignoring DOCKER_STEPCA_INIT_* and serving the
+# already initialized, silently ignoring DOCKER_STEPCA_INIT_* and serving the
 # previous run's PKI.
 ADMIN_VOLUME="${ADMIN_CONTAINER}-data-$$"
 

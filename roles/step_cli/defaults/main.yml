@@ -1,0 +1,40 @@
+---
+# The step CLI, and the smallstep repository both roles install from. ca_server
+# depends on this role rather than repeating any of it.
+
+# The version as the package manager spells it, or empty for whatever the
+# repository currently holds. Debian needs the upstream version and the Debian
+# revision together - "0.30.6-1" - while RedHat takes the version on its own -
+# "0.30.6" - and accepts version-release too.
+#
+# Empty is not "track the latest": the install is state: present, so this is
+# whatever the repository held when the package first arrived.
+#
+# Lowering a version is not a downgrade: apt refuses one unless asked, and dnf
+# treats an older package as already satisfied. Set step_cli_packages outright
+# to pin backwards.
+step_cli_version: ""
+
+# What to install. Replace outright to name a package from your own repository.
+step_cli_packages: "{{ step_cli_package_names }}"
+
+# Smallstep publishes signed apt and yum repositories carrying step-ca and
+# step-cli. Set this false to leave repository configuration alone entirely -
+# if you mirror them, or define the repository yourself - and the install uses
+# whatever the package manager already knows about.
+step_cli_manage_repository: true
+
+# Whether the repository's metadata signature is verified - apt's Release, and
+# dnf's repomd.xml. Smallstep publishes the key that signs it.
+#
+# Turning this off is RedHat-only. apt has no working equivalent: `trusted=yes`
+# leaves it warning NO_PUBKEY, and the apt module treats that as a fetch
+# failure where apt-get merely warns. install_Debian.yml says so rather than
+# ignoring the request. Use step_cli_manage_repository: false there instead.
+step_cli_repository_gpg_check: true
+
+# Whether the packages themselves are checked against smallstep's signing key,
+# which they publish alongside the repository. RedHat-only: apt has no
+# per-package signature check, and gets the same assurance transitively from a
+# signed Release and the checksums in it.
+step_cli_package_gpg_check: true

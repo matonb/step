@@ -1,10 +1,14 @@
 # Integration tests
 
-Drives `matonb.step.provisioner` against real `step-ca` instances, one in each
-management mode. Unit tests cannot prove that a flag is accepted by the real
-binary, or that an Admin API change reaches the running CA — these can.
+Two suites, for the two halves of the collection.
 
-## Running
+`run.sh` drives `matonb.step.provisioner` against real `step-ca` instances, one
+in each management mode. `role.sh` drives the `ca_server` role against
+containers running a real PID 1 systemd. Unit tests cannot prove that a flag is
+accepted by the real binary, that an Admin API change reaches the running CA, or
+that systemd does what a `when` clause assumed — these can.
+
+## `run.sh` — the provisioner module
 
 ```bash
 bash tests/integration/run.sh
@@ -46,6 +50,50 @@ rather than against the CA. This is the regression test for
 [#31](https://github.com/matonb/step/issues/31); before the fix the second add
 failed with `provisioner with name acme already exists`. A single `SIGHUP` at
 the end confirms the CA converges on exactly what `ca.json` holds.
+
+## `role.sh` — the ca_server and step_cli roles
+
+```bash
+bash tests/integration/role.sh
+```
+
+Twelve scenarios, run once per OS family — Debian and Rocky 9. Both roles
+install by package name from one repository, but the plumbing around it still
+diverges: an apt sources file and a keyring against a `yum_repository` stanza,
+support packages on the Debian side only, and a verification switch RedHat
+honours and Debian refuses. Requires `docker`, `ansible-playbook` and the
+`community.docker` collection. A full run takes around seven minutes;
+`STEP_TEST_FAMILIES=debian` halves it while iterating, and `STEP_TEST_KEEP`
+leaves the containers up for inspection.
+
+| # | Scenario | What it pins |
+| --- | --- | --- |
+| 1 | Check mode on an untouched host | Nothing installed, no unit written, and neither the repository definition nor the signing key put on disk; the guards that make `--check` survive a host with no step-ca binary and no repository |
+| 2 | Fresh host, `ca_server` alone | Unit written and enabled, `ConditionResult=no`, the `Restart` handler fires without failing the play — **and the CLI is present**, which is what makes the `step_cli` dependency load bearing |
+| 3 | `step_cli` after `ca_server` | No changes, and one `deb` line: the two roles must not rewrite each other's repository |
+| 4 | A pinned version | The family-specific separator — apt wants `name=version`, dnf `name-version` — plus a nonexistent version failing, so an empty pin cannot pass |
+| 5 | Unmanaged repository | With `step_cli_manage_repository: false`, `--check` still reports on `step-ca` rather than skipping it |
+| 6 | Second run | No changes |
+| 7 | Check mode, provisioned | Reports drift instead of aborting |
+| 8 | Check mode, package but no unit | Completes; without the guard this aborts with `Could not find the requested service step-ca` |
+| 9 | CA initialized | The service-state gate opens and the CA serves |
+| 10 | Hand-edited unit | Restored **and** the process re-executed — MainPID must change |
+| 11 | Empty password file | The gate closes again; the run reports no change |
+| 12 | Reload | The handler fires **and** MainPID is unchanged |
+
+10 and 12 are the ones that matter most: they distinguish restart from reload,
+which is the error the role's first design made. 12 asserts the handler ran
+before comparing PIDs, because an unchanged PID is also what a handler that
+never fired would produce — and 5 exists for the same reason, since a skipped
+task and a task that found nothing to do both leave the play green.
+
+Ordering is load bearing in 2. Running `step_cli` first, as an earlier version
+of this suite did, meant removing `ca_server`'s dependency on it changed
+nothing and every scenario still passed.
+
+Four defects were found by running this rather than by reading anything: a
+missing `libcap2-bin`, a missing `procps`, an apt cache `--check` will not
+refresh, and a unit whose `ExecReload` had no `/bin/kill`.
 
 ## One thing worth knowing
 

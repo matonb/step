@@ -1,9 +1,10 @@
 ---
 - name: Ensure step group
   become: true
-  ansible.builtin.user:
+  ansible.builtin.group:
     name: step
     system: true
+
 - name: Ensure step user
   become: true
   ansible.builtin.user:
@@ -12,18 +13,118 @@
     home: /etc/step-ca
     shell: /bin/false
     system: true
+
 - name: Include OS family specific install tasks
   ansible.builtin.include_tasks:
-    file: "install_{{ ansible_os_family }}.yml"
+    file: "install_{{ ansible_facts['os_family'] }}.yml"
+
+# Under --check the install above only reported what it would do, so on a host
+# that has never had step-ca the binary is not there and setcap has nothing to
+# read. Reporting that as a failure ends the play; skipping it lets --check get
+# as far as it usefully can.
+- name: Check whether the step-ca binary is present
+  become: true
+  ansible.builtin.stat:
+    path: /usr/bin/step-ca
+    follow: true
+    get_attributes: false
+    get_checksum: false
+    get_mime: false
+  register: ca_server_binary
+
 - name: Ensure CAP_NET_BIND_SERVICE to /usr/bin/step-ca
   become: true
   community.general.capabilities:
     capability: "cap_net_bind_service=ep"
     path: /usr/bin/step-ca
     state: present
+  when: ca_server_binary.stat.exists or not ansible_check_mode
+
+# Taken before the template below writes it, so it answers "did this host
+# already have the unit?" rather than "did we just write one?".
+#
+# Everything that talks to systemd is gated on it, because systemd_service
+# calls fail_if_missing() before it honours check mode: against a host with no
+# unit file a --check run aborts the play with "Could not find the requested
+# service step-ca" instead of reporting what it would do. Gating on the unit
+# rather than on ansible_check_mode alone keeps --check useful on a host that
+# has already been through the role once.
+- name: Check whether the step-ca unit file is already present
+  become: true
+  ansible.builtin.stat:
+    path: /etc/systemd/system/step-ca.service
+    get_attributes: false
+    get_checksum: false
+    get_mime: false
+  register: ca_server_unit_file
+
 - name: Ensure systemd unit file
   become: true
   ansible.builtin.template:
     src: unit.j2
     dest: /etc/systemd/system/step-ca.service
     mode: '0644'
+  notify: Restart step-ca
+
+# daemon_reload here as well as in the handlers, so systemd sees the unit
+# straight away rather than only when handlers flush at the end of the play.
+- name: Ensure step-ca starts at boot
+  become: true
+  ansible.builtin.systemd_service:
+    name: step-ca
+    daemon_reload: true
+    enabled: "{{ ca_server_service_enabled }}"
+  when: >-
+    not ansible_check_mode
+    or (ca_server_unit_file is defined and ca_server_unit_file.stat.exists)
+
+# unit.j2 carries a ConditionFileNotEmpty for each of these. systemd skips a
+# unit whose conditions are unmet and systemctl still exits 0, so asking for
+# `started` before they are in place leaves Ansible reporting a change on every
+# run while the CA never actually comes up - success on a dead service. Both
+# conditions are checked, not just ca.json, and emptiness counts as absence
+# exactly as it does to systemd.
+#
+# follow: true because stat defaults to lstat, which reports a symlink's own
+# size - the length of the target path, never zero - so a symlink to a missing
+# or empty file would sail through a gate systemd then failed. Checksums off
+# because nothing here needs one and stat would otherwise read the CA password
+# and return its hash in the task result, where -v prints it.
+- name: Check whether the CA configuration is in place
+  become: true
+  ansible.builtin.stat:
+    path: /etc/step-ca/config/ca.json
+    follow: true
+    get_attributes: false
+    get_checksum: false
+    get_mime: false
+  register: ca_server_ca_config
+
+- name: Check whether the CA password file is in place
+  become: true
+  ansible.builtin.stat:
+    path: "{{ ca_server_password_file }}"
+    follow: true
+    get_attributes: false
+    get_checksum: false
+    get_mime: false
+  register: ca_server_password_stat
+
+# Both files are read as this task file runs, so a CA initialized later in the
+# same play is not seen until the next one. That is only a gap when the unit
+# file is unchanged as well, since a changed unit notifies Restart step-ca and
+# that starts the service at the end of the play. Documented in the README.
+- name: Ensure the step-ca service state
+  become: true
+  ansible.builtin.systemd_service:
+    name: step-ca
+    state: "{{ ca_server_service_state }}"
+  when:
+    - >-
+      not ansible_check_mode
+      or (ca_server_unit_file is defined and ca_server_unit_file.stat.exists)
+    - ca_server_service_state is truthy
+    - ca_server_ca_config.stat.exists
+    - ca_server_ca_config.stat.size > 0
+    - ca_server_password_stat.stat.exists
+    - ca_server_password_stat.stat.size > 0

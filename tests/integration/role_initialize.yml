@@ -1,0 +1,66 @@
+---
+# Takes the host from "role applied, nothing running" to "CA initialized", so
+# the service-state gate can be watched opening. Uses the collection's own
+# initialize module rather than shelling out, since a CA host running both is
+# the case the role exists to produce.
+- name: Initialize the CA on a host the role has prepared
+  hosts: step_role
+  gather_facts: true
+
+  # Applied first so its defaults are in play scope: the password file this
+  # writes has to be the one the unit's ConditionFileNotEmpty names, and
+  # hardcoding the path here would let the two drift and still pass.
+  roles:
+    - matonb.step.ca_server
+
+  tasks:
+    - name: Write the CA password
+      become: true
+      ansible.builtin.copy:
+        content: "{{ step_role_ca_password }}\n"
+        dest: "{{ ca_server_password_file }}"
+        owner: step
+        group: step
+        mode: '0600'
+
+    - name: Initialize the CA
+      become: true
+      become_user: step
+      matonb.step.initialize:
+        name: Role Test CA
+        path: /etc/step-ca
+        dns:
+          - localhost
+        address: ":8443"
+        password_file: "{{ ca_server_password_file }}"
+        provisioner_password_file: "{{ ca_server_password_file }}"
+      register: step_role_init
+
+    - name: The CA was created
+      ansible.builtin.assert:
+        that:
+          - step_role_init.changed
+          - step_role_init.management_mode == 'config'
+        fail_msg: "initialize did not create a CA: {{ step_role_init }}"
+
+    - name: Running it again reports ok, not failure
+      become: true
+      become_user: step
+      matonb.step.initialize:
+        name: Role Test CA
+        path: /etc/step-ca
+        dns:
+          - localhost
+        address: ":8443"
+        password_file: "{{ ca_server_password_file }}"
+        provisioner_password_file: "{{ ca_server_password_file }}"
+      register: step_role_reinit
+
+    - name: The second run changed nothing
+      ansible.builtin.assert:
+        that:
+          - not step_role_reinit.changed
+          - "'already initialized' in step_role_reinit.msg"
+        fail_msg: >-
+          initialize is not idempotent against a real CA:
+          {{ step_role_reinit }}

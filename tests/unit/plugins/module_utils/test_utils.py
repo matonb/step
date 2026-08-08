@@ -211,7 +211,7 @@ class TestSaveJsonFile:
         assert link.is_symlink()
         assert json.loads(real.read_text(encoding="utf-8")) == {"new": True}
 
-    def test_unserialisable_data_is_reported_not_raised(self, tmp_path):
+    def test_unserializable_data_is_reported_not_raised(self, tmp_path):
         target = tmp_path / "ca.json"
         target.write_text('{"precious": true}', encoding="utf-8")
 

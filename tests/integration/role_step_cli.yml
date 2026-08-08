@@ -1,0 +1,60 @@
+---
+# step_cli owns the smallstep repository and the CLI; ca_server depends on it.
+# This drives it on its own, which is how a client host uses it.
+- name: Apply the step_cli role
+  hosts: step_role
+  gather_facts: true
+
+  roles:
+    - matonb.step.step_cli
+
+  tasks:
+    - name: The step CLI is on PATH and runs
+      ansible.builtin.command: step version
+      changed_when: false
+      register: step_role_cli_version
+
+    - name: It is smallstep's CLI
+      ansible.builtin.assert:
+        that:
+          - "'Smallstep CLI/' in step_role_cli_version.stdout"
+        fail_msg: >-
+          `step version` did not report a Smallstep CLI:
+          {{ step_role_cli_version.stdout }}
+
+    # Asked of the package manager rather than inferred from a file existing,
+    # which is what this used to do and which would have passed just as well
+    # had the role configured the repository and installed from elsewhere.
+    #
+    # The two families can answer to different depths, so they are asked
+    # different questions rather than one question that only half works:
+    #
+    #   RedHat  - rpm records the repository a package came from, so
+    #             `%{from_repo}` is provenance in the strict sense.
+    #   Debian  - dpkg records no origin at all. The closest apt has is the
+    #             source list for the *installed* version, which apt-cache
+    #             policy marks with ***. Plain `apt-cache policy step-cli`
+    #             lists every source offering the package at any version and
+    #             so proves nothing; narrowing to the *** block at least
+    #             establishes that smallstep's repository offers exactly the
+    #             version that is installed.
+    - name: Ask the package manager where the CLI came from
+      become: true
+      ansible.builtin.shell:
+        cmd: >-
+          {{ "apt-cache policy step-cli | grep -A2 '^ [*][*][*]'"
+             if ansible_facts['os_family'] == 'Debian'
+             else "dnf repoquery --installed --qf '%{from_repo}' step-cli" }}
+      changed_when: false
+      register: step_role_origin
+
+    - name: The installed version is one smallstep's repository provides
+      ansible.builtin.assert:
+        that:
+          - >-
+            ('packages.smallstep.com' in step_role_origin.stdout)
+            if ansible_facts['os_family'] == 'Debian'
+            else ('smallstep' in step_role_origin.stdout)
+        fail_msg: >-
+          step-cli did not come from the smallstep repository:
+          {{ step_role_origin.stdout }}

@@ -1,0 +1,10 @@
+---
+# Applies the ca_server role. Driven by role.sh, with and without --check; the
+# assertions live there, because what this change is really about is what
+# systemd does, and systemd is only observable from the host side.
+- name: Apply the ca_server role
+  hosts: step_role
+  gather_facts: true
+
+  roles:
+    - matonb.step.ca_server

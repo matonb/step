@@ -21,7 +21,7 @@ description:
     on a real change. Settings this module does not manage are left untouched.
   - >-
     Durations are compared as durations rather than as text, because step
-    renormalises them when it rewrites C(ca.json): a claim set here as C(8760h)
+    renormalizes them when it rewrites C(ca.json): a claim set here as C(8760h)
     is written back as C(8760h0m0s). The two mean the same thing and are not
     treated as a change.
   - >-
@@ -123,13 +123,13 @@ EXAMPLES = r"""
     default_tls_cert_duration: "720h"
     json_path: /etc/step-ca/config/ca.json
     max_tls_cert_duration: "8760h"
-  notify: restart step-ca
+  notify: Reload step-ca
 
 - name: Configure the database datasource
   matonb.step.configure:
     db_datasource: /var/lib/step-ca/db
     json_path: /etc/step-ca/config/ca.json
-  notify: restart step-ca
+  notify: Reload step-ca
 
 - name: Configure paths and durations together
   matonb.step.configure:
@@ -138,7 +138,7 @@ EXAMPLES = r"""
     key: /etc/step-ca/secrets/intermediate_ca_key
     max_tls_cert_duration: "17520h"
     root: /etc/step-ca/certs/root_ca.crt
-  notify: restart step-ca
+  notify: Reload step-ca
 """
 
 RETURN = r"""
@@ -274,7 +274,7 @@ def apply_updates(config, params):
             raise ValueError(f"Invalid value for '{key}': {exc}") from exc
 
         claim = CLAIM_KEYS[key]
-        # Durations are compared as durations, not as text. step renormalises
+        # Durations are compared as durations, not as text. step renormalizes
         # what it writes - a claim set here as 8760h comes back as 8760h0m0s
         # once step has rewritten ca.json - and rewriting that to the requested
         # spelling would report changed on every run and restart the CA with

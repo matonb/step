@@ -1,0 +1,63 @@
+---
+# Role-internal. Override the variables in defaults/main.yml instead.
+
+# Smallstep's own repositories, which carry step-ca and step-cli current to the
+# latest GitHub release across every architecture upstream builds for.
+# Installing by package name is why neither role needs an architecture map.
+step_cli_repository_debian_url: https://packages.smallstep.com/stable/debian
+step_cli_repository_el_url: https://packages.smallstep.com/stable/el
+step_cli_repository_keyring: /etc/apt/keyrings/smallstep.asc
+
+# Where the repository definition lands, derived once and read by both roles -
+# ca_server gates its own install on the file being there, and got the path
+# wrong-by-copying until this existed.
+#
+# yum_repository names its file after the repository id, so both come from
+# step_cli_repository_name rather than being written out twice and kept in step
+# by hand. A path that drifts does not fail loudly: the gates just decide the
+# repository is absent and skip the install under --check, for ever.
+step_cli_repository_name: smallstep
+step_cli_repository_deb_file: >-
+  /etc/apt/sources.list.d/{{ step_cli_repository_name }}.list
+step_cli_repository_el_file: >-
+  /etc/yum.repos.d/{{ step_cli_repository_name }}.repo
+
+# Two different keys, signing two different things.
+#
+# The repository metadata - apt's Release, and repomd.xml - is signed by the
+# Artifact Registry key smallstep hosts its packages behind. That is what apt's
+# signed-by needs, and what dnf's repo_gpgcheck checks.
+#
+# The packages themselves are signed by Smallstep Ops, 889B19391F774443. The
+# key ID in an RPM header is its signing subkey, C63EB245365FA07B71068049
+# 1E43859CB855223C, which is why the two look unrelated until you import the
+# primary key and rpm -K starts reporting "digests signatures OK".
+step_cli_repository_metadata_key_url: >-
+  https://packages.smallstep.com/keys/apt/repo-signing-key.gpg
+step_cli_repository_el_metadata_key_url: >-
+  https://packages.smallstep.com/stable/el/repodata/repomd.xml.key
+step_cli_package_key_url: >-
+  https://packages.smallstep.com/keys/smallstep-0x889B19391F774443.gpg
+
+# Built here rather than inline in the task: a folded scalar keeps a
+# more-indented continuation line literal instead of folding it, which put a
+# newline in the middle of the URI and left apt unable to read its sources.
+step_cli_repository_line: >-
+  deb [signed-by={{ step_cli_repository_keyring }}]
+  {{ step_cli_repository_debian_url }} debs main
+
+# ca-certificates, because everything this role does over the network is HTTPS:
+# fetching the signing key, and apt reading an https:// source. A minimal image
+# has neither, and without it the first real task fails with a TLS error and
+# nothing that points at the cause.
+step_cli_support_packages:
+  - ca-certificates
+
+# apt wants name=version, dnf wants name-version.
+step_cli_version_separator: >-
+  {{ '=' if ansible_facts['os_family'] == 'Debian' else '-' }}
+
+step_cli_package_names:
+  - >-
+    step-cli{{ (step_cli_version_separator ~ step_cli_version)
+    if step_cli_version else '' }}

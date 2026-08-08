@@ -1,7 +1,41 @@
 ---
-- name: Install package.
+# The smallstep repository is already configured: step_cli is a dependency of
+# this role and owns it, along with the step CLI itself. See meta/main.yml.
+#
+# No support-package task here, unlike install_Debian.yml. EL's systemd already
+# requires libcap, which owns getcap and setcap, and util-linux, which pulls
+# util-linux-core and so brings /usr/bin/kill - see vars/main.yml. A task
+# installing them anyway would be one the suite could never make fail, which is
+# how it was caught.
+
+- name: Check whether the smallstep repository is configured
   become: true
-  ansible.builtin.package:
-    name: "{{ item }}"
+  ansible.builtin.stat:
+    path: "{{ step_cli_repository_el_file }}"
+    get_attributes: false
+    get_checksum: false
+    get_mime: false
+  register: ca_server_repository_stat
+
+# Under --check on a host that has never run this role, step_cli's repository
+# task wrote nothing either, so dnf has no step-ca to report on and the install
+# would fail outright rather than say what it would do. Same shape as the
+# unit-file gate in main.yml, and the same as step_cli's own install gate -
+# which it has to be. Somebody managing the repository themselves has one that
+# this file cannot find, and without the middle clause --check would answer
+# their play twice over: step_cli reporting on the CLI, this reporting nothing
+# at all about step-ca. "Nothing to do" for a package that is absent is a wrong
+# answer, not a cautious one.
+#
+# step_cli_manage_repository is in scope because step_cli is a dependency, and
+# Role.get_default_vars merges a dependency's defaults into the dependent
+# role's scope.
+- name: Install step-ca
+  become: true
+  ansible.builtin.dnf:
+    name: "{{ ca_server_packages }}"
     state: present
-  loop: "{{ step_ca_packages }}"
+  when: >-
+    not ansible_check_mode
+    or not step_cli_manage_repository | bool
+    or ca_server_repository_stat.stat.exists | default(false)

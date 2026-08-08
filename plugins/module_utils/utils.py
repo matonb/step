@@ -87,7 +87,7 @@ def generate_secure_password(length: int = 32) -> str:
 def parse_duration(value: str) -> int:
     """Parse a Go duration string into a whole number of nanoseconds.
 
-    The CA normalises durations when it serialises them, so a claim requested
+    The CA normalizes durations when it serializes them, so a claim requested
     as C(5m) is returned by C(step ca provisioner list) as C(5m0s). Comparing
     the parsed values avoids treating that as a change.
 
@@ -217,8 +217,8 @@ def save_json_file(module, json_path: str, data: dict[str, Any]) -> Optional[str
     """Write JSON to a file atomically, replacing it in one step.
 
     Writing in place would empty the file before the new contents were
-    complete, so an interruption or a serialisation error would leave a CA
-    configuration that step-ca cannot load. Serialising to a temporary file
+    complete, so an interruption or a serialization error would leave a CA
+    configuration that step-ca cannot load. Serializing to a temporary file
     first means the original survives every failure: either the replacement
     succeeds whole, or nothing happened at all.
 
