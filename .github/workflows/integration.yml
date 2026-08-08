@@ -96,10 +96,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install "ansible-core==${ANSIBLE_CORE_VERSION}"
 
-      # role.sh talks to its containers through community.docker's connection
-      # plugin rather than SSH, and checks for it before doing anything.
-      - name: Install community.docker
-        run: ansible-galaxy collection install community.docker
+      # Two collections, for two different reasons. role.sh talks to its
+      # containers through community.docker's connection plugin rather than
+      # SSH, and checks for it before doing anything. community.general is the
+      # ca_server role's own dependency - it uses the capabilities module to
+      # grant CAP_NET_BIND_SERVICE - and without it the play fails at that
+      # task rather than up front.
+      - name: Install the collections the suite and the roles need
+        run: |
+          ansible-galaxy collection install community.docker
+          ansible-galaxy collection install community.general
 
       # Twelve scenarios across two OS families, in containers with a real
       # PID 1 systemd. Around seven minutes.
