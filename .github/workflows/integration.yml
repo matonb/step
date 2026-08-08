@@ -1,0 +1,108 @@
+---
+name: Integration
+
+# Neither suite runs on every pull request. Both take minutes rather than
+# seconds, both need Docker, and both reach smallstep's CDN - so on every PR
+# they would make merging anything depend on a third party being up, and the
+# failures people learn to ignore are the ones that fail for reasons unrelated
+# to the change.
+#
+# So: on demand, or when a pull request opts in by carrying the `integration`
+# label. `synchronize` is listed as well as `labeled` so that pushing more
+# commits to an already-labelled PR re-runs them, rather than leaving the last
+# green result standing over code it never saw.
+#
+# Nothing here is a merge gate. A failure is something to read.
+"on":
+  workflow_dispatch:
+  pull_request:
+    types: [labeled, synchronize]
+
+env:
+  ANSIBLE_CORE_VERSION: "2.20.5"
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  # Two jobs rather than one script after another: a role.sh failure must not
+  # bury a run.sh result, and either can be re-run on its own.
+  modules:
+    name: Modules against a real step-ca
+    # Same pin as the sanity job, so the container behaviour these exercise is
+    # not also drifting with the runner image.
+    runs-on: ubuntu-24.04
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || contains(github.event.pull_request.labels.*.name, 'integration')
+
+    steps:
+      # ansible-test is not used here, but role.sh and run.sh resolve the
+      # collection as matonb.step, so the checkout still has to sit at
+      # that path.
+      - name: Checkout into a collection path
+        uses: actions/checkout@v7
+        with:
+          path: ansible_collections/matonb/step
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install ansible-core
+        run: |
+          python -m pip install --upgrade pip
+          pip install "ansible-core==${ANSIBLE_CORE_VERSION}"
+
+      # run.sh drives the step CLI on the runner itself, not only in the
+      # container, so it has to be installed here. From smallstep's own
+      # repository, which is what the collection installs from.
+      - name: Install the step CLI
+        env:
+          KEY_URL: https://packages.smallstep.com/keys/apt/repo-signing-key.gpg
+          KEYRING: /etc/apt/keyrings/smallstep.asc
+          REPO_URL: https://packages.smallstep.com/stable/debian
+        run: |
+          curl -fsSL "$KEY_URL" | sudo tee "$KEYRING" >/dev/null
+          echo "deb [signed-by=$KEYRING] $REPO_URL debs main" \
+            | sudo tee /etc/apt/sources.list.d/smallstep.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y step-cli
+          step version
+
+      - name: Run the module suite
+        working-directory: ansible_collections/matonb/step
+        run: bash tests/integration/run.sh
+
+  roles:
+    name: Roles against real systemd
+    runs-on: ubuntu-24.04
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || contains(github.event.pull_request.labels.*.name, 'integration')
+
+    steps:
+      - name: Checkout into a collection path
+        uses: actions/checkout@v7
+        with:
+          path: ansible_collections/matonb/step
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install ansible-core
+        run: |
+          python -m pip install --upgrade pip
+          pip install "ansible-core==${ANSIBLE_CORE_VERSION}"
+
+      # role.sh talks to its containers through community.docker's connection
+      # plugin rather than SSH, and checks for it before doing anything.
+      - name: Install community.docker
+        run: ansible-galaxy collection install community.docker
+
+      # Twelve scenarios across two OS families, in containers with a real
+      # PID 1 systemd. Around seven minutes.
+      - name: Run the role suite
+        working-directory: ansible_collections/matonb/step
+        run: bash tests/integration/role.sh

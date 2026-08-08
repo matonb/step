@@ -19,8 +19,11 @@ started on ports 9101 and 9102 and removed on exit, including on failure.
 Override with `STEP_TEST_ADMIN_PORT`, `STEP_TEST_CONFIG_PORT` and
 `STEP_TEST_IMAGE`.
 
-Not run in CI: it pulls an image and needs a Docker daemon, so it should not
-gate a pull request until it has proven stable. Run it before a release, and
+Not run on every pull request: it pulls an image and needs a Docker daemon, so
+it should not gate a merge, and a failure reaching smallstep's CDN says nothing
+about the change under review. Both suites run when a PR carries the
+`integration` label, and from the Actions tab on demand
+(`.github/workflows/integration.yml`). Run it locally before a release, and
 whenever command construction or mode handling changes.
 
 ## What each suite asserts
