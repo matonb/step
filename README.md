@@ -641,7 +641,9 @@ repeating the path, so changing `ca_server_password_file` moves both the unit's
 
 Both roles are covered by `tests/integration/role.sh`, which drives them against
 containers running a real systemd — once on Debian and once on Rocky 9. Like the
-module suite it needs docker and is not run by CI.
+module suite it needs docker, so it does not run on every pull request: add the
+`integration` label to a PR to run both suites against it, or start them from
+the Actions tab. Neither gates a merge.
 
 ## Special Notes
 
