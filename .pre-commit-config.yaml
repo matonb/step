@@ -31,15 +31,19 @@ repos:
   # CI runs shellcheck as part of ansible-test sanity, on a runner that has it;
   # a workstation without it saw that test skipped and the gate pass anyway.
   # This closes the gap the other way round, so the two agree before a push.
+  #
+  # Pinned to shellcheck 0.9.0, which is what ubuntu-latest ships (24.04 has
+  # 0.9.0-1) and therefore what the sanity test actually runs. Version matters:
+  # 0.11 stopped reporting SC2015 where the alternative branch is `true` or
+  # exits, so a hook on 0.11 passed two findings straight through to a red CI.
+  # If this drifts from the runner image again, that is the thing to re-check.
   - repo: https://github.com/shellcheck-py/shellcheck-py
-    rev: v0.11.0.1
+    rev: v0.9.0.6
     hooks:
       - id: shellcheck
         name: shellcheck
         description: Lint shell scripts
-        # The same exclusions ansible-test passes, so this hook and the sanity
-        # test disagree about nothing except their shellcheck version - which
-        # they still can, so code here is written to satisfy the older one too.
+        # The exclusions ansible-test passes, so nothing separates the two.
         args: [-e, "SC1090,SC1091,SC2028"]
 #
 # Disabled for now - requires more complex configuration for collection metadata

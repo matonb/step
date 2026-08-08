@@ -23,7 +23,12 @@ jobs:
   # tree, so both jobs check out into one.
   sanity:
     name: Sanity
-    runs-on: ubuntu-latest
+    # Pinned rather than latest because the shellcheck sanity test uses
+    # whichever shellcheck the runner ships - 0.9.0 on 24.04 - and
+    # .pre-commit-config.yaml pins the same one so a local pass means what a
+    # CI pass means. On ubuntu-latest the pair silently diverges the day the
+    # label moves; here the two are updated together, deliberately.
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout into a collection path

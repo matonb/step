@@ -68,14 +68,22 @@ def sanitize_output(text: Optional[str], strip_ansi: bool = True) -> Optional[st
     return text
 
 
-def demote_user(username: str):
-    """Demote the current process to the specified user's privileges.
+def _resolve_demotion(username: str) -> tuple[pwd.struct_passwd, list[int]]:
+    """Look up everything the switch needs, before any fork.
+
+    Both lookups go to NSS, which on a host using SSSD or LDAP means network
+    I/O and a lock. Done here, in the parent, that is ordinary. Done between
+    fork and exec it is the classic preexec_fn hazard: the child holds a copy
+    of whatever locks were held at fork time and can deadlock against them.
 
     Args:
         username: The target system user to impersonate.
 
+    Returns:
+        The user's passwd record and the group ids they belong to.
+
     Raises:
-        RuntimeError: If the user cannot be found or privileges cannot be dropped.
+        RuntimeError: If the user cannot be found or their groups cannot be read.
     """
     try:
         pw_record = pwd.getpwnam(username)
@@ -83,7 +91,33 @@ def demote_user(username: str):
         raise RuntimeError(f"User '{username}' not found on the system.") from exc
 
     try:
-        # First change GID, then UID to prevent permission issues
+        groups = os.getgrouplist(username, pw_record.pw_gid)
+    except OSError as exc:
+        raise RuntimeError(f"Could not read the groups for user '{username}': {exc}") from exc
+
+    return pw_record, groups
+
+
+def _apply_demotion(username: str, pw_record: pwd.struct_passwd, groups: list[int]) -> None:
+    """Drop to the given user's ids. Syscalls only, safe after a fork.
+
+    Args:
+        username: The target system user, for the environment and messages.
+        pw_record: The user's passwd record, from _resolve_demotion.
+        groups: The user's group ids, from _resolve_demotion.
+
+    Raises:
+        RuntimeError: If privileges cannot be dropped.
+    """
+    try:
+        # Supplementary groups first. setgid and setuid leave the calling
+        # process's own group memberships in place, and the caller here is
+        # root, so without this the command keeps root's groups after the
+        # switch and holds access the target user was never granted.
+        #
+        # Then GID, then UID. Once the UID is no longer root none of the three
+        # is permitted, so this order is what makes the drop stick.
+        os.setgroups(groups)
         os.setgid(pw_record.pw_gid)
         os.setuid(pw_record.pw_uid)
     except OSError as exc:
@@ -97,6 +131,50 @@ def demote_user(username: str):
             "LOGNAME": username,
         }
     )
+
+
+def demote_user(username: str):
+    """Demote the current process to the specified user's privileges.
+
+    Args:
+        username: The target system user to impersonate.
+
+    Raises:
+        RuntimeError: If the user cannot be found or privileges cannot be dropped.
+    """
+    pw_record, groups = _resolve_demotion(username)
+    _apply_demotion(username, pw_record, groups)
+
+
+def _demotion_hook(username: Optional[str]) -> Optional[Callable[[], None]]:
+    """Build the post-fork hook that drops privileges, or nothing to run.
+
+    Returning None rather than a callable that does nothing matters: preexec_fn
+    runs arbitrary Python between fork and exec and is not thread-safe, so a
+    command with no user to switch to should not carry one at all.
+
+    The lookup happens here rather than in the hook. subprocess reports any
+    exception from a preexec_fn as a generic SubprocessError - "Exception
+    occurred in preexec_fn." - so a misspelled username raised in the child
+    reaches the operator as that and nothing else. Raised here it is the
+    RuntimeError naming the user, before anything forks.
+
+    Args:
+        username: The target system user, or None to run as the current user.
+
+    Returns:
+        A callable for subprocess's preexec_fn, or None when nothing is to be
+        demoted.
+
+    Raises:
+        RuntimeError: If the user cannot be found or their groups cannot be read.
+    """
+    if not username:
+        return None
+
+    pw_record, groups = _resolve_demotion(username)
+
+    return lambda: _apply_demotion(username, pw_record, groups)
 
 
 def _validate_user_switch(username: Optional[str]) -> None:
@@ -228,44 +306,25 @@ def run_command(
         )
 
     # Otherwise, use the simpler subprocess approach
-    try:
-        # Use subprocess.Popen for more controlled execution
-        with subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=user_env,
-            text=text,
-            shell=shell,
-            preexec_fn=lambda: demote_user(username) if username else None,
-        ) as process:
-            # Wait for the process to complete
-            stdout, stderr = process.communicate()
+    with subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=user_env,
+        text=text,
+        shell=shell,
+        preexec_fn=_demotion_hook(username),
+    ) as process:
+        # Wait for the process to complete
+        stdout, stderr = process.communicate()
 
-            # Create CompletedProcess with results
-            result = _create_completed_process(command, process.returncode, stdout, stderr, text, strip_ansi)
+        # Create CompletedProcess with results
+        result = _create_completed_process(command, process.returncode, stdout, stderr, text, strip_ansi)
 
-            # Check return code if required
-            _handle_command_failure(result, check, text)
+        # Check return code if required
+        _handle_command_failure(result, check, text)
 
-            return result
-
-    except subprocess.CalledProcessError as exc:
-        if check:
-            # Sanitize stdout and stderr
-            stderr = sanitize_output(exc.stderr, strip_ansi) if text else exc.stderr
-            stdout = sanitize_output(exc.stdout, strip_ansi) if text else exc.stdout
-
-            raise RuntimeError(
-                f"Command failed with return code {exc.returncode}.\nSTDOUT: {stdout}\nSTDERR: {stderr}"
-            ) from exc
-
-        # Sanitize stdout and stderr for the exception case
-        if text:
-            exc.stdout = sanitize_output(exc.stdout, strip_ansi)
-            exc.stderr = sanitize_output(exc.stderr, strip_ansi)
-
-        return exc
+        return result
 
 
 def _run_with_timeout(
@@ -295,7 +354,7 @@ def _run_with_timeout(
 
     Raises:
         CommandTimeoutError: If the command execution exceeds the timeout.
-        subprocess.CalledProcessError: If the command returns non-zero and check=True.
+        RuntimeError: If the command returns non-zero and check=True.
     """
     # Start the process
     process = subprocess.Popen(
@@ -305,7 +364,7 @@ def _run_with_timeout(
         stderr=subprocess.PIPE,
         env=env,
         text=text,
-        preexec_fn=lambda: demote_user(username) if username else None,
+        preexec_fn=_demotion_hook(username),
     )
 
     try:
@@ -336,11 +395,17 @@ def _run_with_timeout(
         return result
 
     finally:
-        # Ensure the process is terminated
-        try:
-            process.terminate()
-        except ProcessLookupError:
-            pass
+        # A no-op on every path above, where communicate() has already set
+        # returncode and terminate() skips a process known to have died. It
+        # earns its place for the paths not above: communicate() raising
+        # anything other than TimeoutExpired - a UnicodeDecodeError on invalid
+        # UTF-8 from the child, with text=True - leaves that child running and
+        # this is what reaps it.
+        #
+        # No handler around it. Popen.send_signal polls first, returns early
+        # once returncode is set, and catches ProcessLookupError itself for the
+        # race after that (bpo-40550), so there is nothing left here to catch.
+        process.terminate()
 
 
 # For backward compatibility
