@@ -513,10 +513,11 @@ release-asset URL is what lets apt and dnf resolve the architecture, the
 dependencies and the upgrade path themselves.
 
 Leave a version empty for whatever the repository currently holds, or pin it as
-the package manager spells it — Debian wants the package revision (`0.30.2-1`),
-RedHat does not (`0.30.2`). Note that lowering a version is not a downgrade:
-apt refuses one unless explicitly asked, and dnf treats an older package as
-already satisfied. Set the `*_packages` list outright to pin backwards.
+the package manager spells it. Debian needs the package revision (`0.30.2-1`);
+RedHat takes the version on its own (`0.30.2`) and will accept the revision
+too. Note that lowering a version is not a downgrade: apt refuses one unless
+explicitly asked, and dnf treats an older package as already satisfied. Set
+the `*_packages` list outright to pin backwards.
 
 ### Signature checking
 

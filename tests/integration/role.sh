@@ -315,7 +315,10 @@ run_scenarios() {
     if [ "$family" = debian ]; then
         installed="$(in_container dpkg-query -W -f='${Version}' step-cli)"
     else
-        installed="$(in_container rpm -q --qf '%{VERSION}-%{RELEASE}' step-cli)"
+        # %{VERSION} alone, which is the form the docs describe for RedHat.
+        # dnf takes the revision too, so asking for it here would have left
+        # the documented spelling untested.
+        installed="$(in_container rpm -q --qf '%{VERSION}' step-cli)"
     fi
     [ -n "$installed" ] || die "could not read the installed step-cli version"
     play role_step_cli.yml -e "step_cli_version=$installed"
@@ -336,7 +339,7 @@ run_scenarios() {
     if [ "$family" = debian ]; then
         installed_ca="$(in_container dpkg-query -W -f='${Version}' step-ca)"
     else
-        installed_ca="$(in_container rpm -q --qf '%{VERSION}-%{RELEASE}' step-ca)"
+        installed_ca="$(in_container rpm -q --qf '%{VERSION}' step-ca)"
     fi
     [ -n "$installed_ca" ] || die "could not read the installed step-ca version"
     play role_ca_server.yml -e "ca_server_ca_version=$installed_ca"

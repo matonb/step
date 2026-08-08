@@ -3,8 +3,9 @@
 # depends on this role rather than repeating any of it.
 
 # The version as the package manager spells it, or empty for whatever the
-# repository currently holds. Debian wants the package revision - "0.30.6-1" -
-# and RedHat does not - "0.30.6".
+# repository currently holds. Debian needs the package revision - "0.30.6-1" -
+# while RedHat takes the version on its own - "0.30.6" - and accepts the
+# revision as well.
 #
 # Lowering a version is not a downgrade: apt refuses one unless asked, and dnf
 # treats an older package as already satisfied. Set step_cli_packages outright
