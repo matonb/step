@@ -68,14 +68,22 @@ def sanitize_output(text: Optional[str], strip_ansi: bool = True) -> Optional[st
     return text
 
 
-def demote_user(username: str):
-    """Demote the current process to the specified user's privileges.
+def _resolve_demotion(username: str) -> tuple[pwd.struct_passwd, list[int]]:
+    """Look up everything the switch needs, before any fork.
+
+    Both lookups go to NSS, which on a host using SSSD or LDAP means network
+    I/O and a lock. Done here, in the parent, that is ordinary. Done between
+    fork and exec it is the classic preexec_fn hazard: the child holds a copy
+    of whatever locks were held at fork time and can deadlock against them.
 
     Args:
         username: The target system user to impersonate.
 
+    Returns:
+        The user's passwd record and the group ids they belong to.
+
     Raises:
-        RuntimeError: If the user cannot be found or privileges cannot be dropped.
+        RuntimeError: If the user cannot be found or their groups cannot be read.
     """
     try:
         pw_record = pwd.getpwnam(username)
@@ -83,14 +91,33 @@ def demote_user(username: str):
         raise RuntimeError(f"User '{username}' not found on the system.") from exc
 
     try:
+        groups = os.getgrouplist(username, pw_record.pw_gid)
+    except OSError as exc:
+        raise RuntimeError(f"Could not read the groups for user '{username}': {exc}") from exc
+
+    return pw_record, groups
+
+
+def _apply_demotion(username: str, pw_record: pwd.struct_passwd, groups: list[int]) -> None:
+    """Drop to the given user's ids. Syscalls only, safe after a fork.
+
+    Args:
+        username: The target system user, for the environment and messages.
+        pw_record: The user's passwd record, from _resolve_demotion.
+        groups: The user's group ids, from _resolve_demotion.
+
+    Raises:
+        RuntimeError: If privileges cannot be dropped.
+    """
+    try:
         # Supplementary groups first. setgid and setuid leave the calling
         # process's own group memberships in place, and the caller here is
         # root, so without this the command keeps root's groups after the
         # switch and holds access the target user was never granted.
         #
-        # Then GID, then UID. Once the UID is no longer root neither of the
-        # first two is permitted, so this order is what makes the drop stick.
-        os.initgroups(username, pw_record.pw_gid)
+        # Then GID, then UID. Once the UID is no longer root none of the three
+        # is permitted, so this order is what makes the drop stick.
+        os.setgroups(groups)
         os.setgid(pw_record.pw_gid)
         os.setuid(pw_record.pw_uid)
     except OSError as exc:
@@ -106,6 +133,19 @@ def demote_user(username: str):
     )
 
 
+def demote_user(username: str):
+    """Demote the current process to the specified user's privileges.
+
+    Args:
+        username: The target system user to impersonate.
+
+    Raises:
+        RuntimeError: If the user cannot be found or privileges cannot be dropped.
+    """
+    pw_record, groups = _resolve_demotion(username)
+    _apply_demotion(username, pw_record, groups)
+
+
 def _demotion_hook(username: Optional[str]) -> Optional[Callable[[], None]]:
     """Build the post-fork hook that drops privileges, or nothing to run.
 
@@ -113,17 +153,28 @@ def _demotion_hook(username: Optional[str]) -> Optional[Callable[[], None]]:
     runs arbitrary Python between fork and exec and is not thread-safe, so a
     command with no user to switch to should not carry one at all.
 
+    The lookup happens here rather than in the hook. subprocess reports any
+    exception from a preexec_fn as a generic SubprocessError - "Exception
+    occurred in preexec_fn." - so a misspelled username raised in the child
+    reaches the operator as that and nothing else. Raised here it is the
+    RuntimeError naming the user, before anything forks.
+
     Args:
         username: The target system user, or None to run as the current user.
 
     Returns:
         A callable for subprocess's preexec_fn, or None when nothing is to be
         demoted.
+
+    Raises:
+        RuntimeError: If the user cannot be found or their groups cannot be read.
     """
     if not username:
         return None
 
-    return lambda: demote_user(username)
+    pw_record, groups = _resolve_demotion(username)
+
+    return lambda: _apply_demotion(username, pw_record, groups)
 
 
 def _validate_user_switch(username: Optional[str]) -> None:
