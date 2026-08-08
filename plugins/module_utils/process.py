@@ -235,44 +235,25 @@ def run_command(
         )
 
     # Otherwise, use the simpler subprocess approach
-    try:
-        # Use subprocess.Popen for more controlled execution
-        with subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=user_env,
-            text=text,
-            shell=shell,
-            preexec_fn=lambda: demote_user(username) if username else None,
-        ) as process:
-            # Wait for the process to complete
-            stdout, stderr = process.communicate()
+    with subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=user_env,
+        text=text,
+        shell=shell,
+        preexec_fn=lambda: demote_user(username) if username else None,
+    ) as process:
+        # Wait for the process to complete
+        stdout, stderr = process.communicate()
 
-            # Create CompletedProcess with results
-            result = _create_completed_process(command, process.returncode, stdout, stderr, text, strip_ansi)
+        # Create CompletedProcess with results
+        result = _create_completed_process(command, process.returncode, stdout, stderr, text, strip_ansi)
 
-            # Check return code if required
-            _handle_command_failure(result, check, text)
+        # Check return code if required
+        _handle_command_failure(result, check, text)
 
-            return result
-
-    except subprocess.CalledProcessError as exc:
-        if check:
-            # Sanitize stdout and stderr
-            stderr = sanitize_output(exc.stderr, strip_ansi) if text else exc.stderr
-            stdout = sanitize_output(exc.stdout, strip_ansi) if text else exc.stdout
-
-            raise RuntimeError(
-                f"Command failed with return code {exc.returncode}.\nSTDOUT: {stdout}\nSTDERR: {stderr}"
-            ) from exc
-
-        # Sanitize stdout and stderr for the exception case
-        if text:
-            exc.stdout = sanitize_output(exc.stdout, strip_ansi)
-            exc.stderr = sanitize_output(exc.stderr, strip_ansi)
-
-        return exc
+        return result
 
 
 def _run_with_timeout(
@@ -302,7 +283,7 @@ def _run_with_timeout(
 
     Raises:
         CommandTimeoutError: If the command execution exceeds the timeout.
-        subprocess.CalledProcessError: If the command returns non-zero and check=True.
+        RuntimeError: If the command returns non-zero and check=True.
     """
     # Start the process
     process = subprocess.Popen(
