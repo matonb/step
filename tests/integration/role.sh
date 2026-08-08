@@ -140,7 +140,18 @@ EL_REPO="/etc/yum.repos.d/$REPOSITORY_NAME.repo"
 COLLECTIONS="$WORK/collections"
 mkdir -p "$COLLECTIONS/ansible_collections/matonb"
 ln -s "$REPO_ROOT" "$COLLECTIONS/ansible_collections/matonb/step"
-export ANSIBLE_COLLECTIONS_PATH="$COLLECTIONS"
+
+# Prepended rather than assigned. This variable replaces the search path, it
+# does not add to it, so a bare assignment hides every collection the host
+# already has - including community.general, which ca_server needs for the
+# capabilities module.
+#
+# That went unnoticed for as long as it did because a workstation whose ansible
+# came with a bundled community.general resolves it out of site-packages, which
+# is searched whatever this says. Where ansible-galaxy put it in
+# ~/.ansible/collections instead - a CI runner, a clean venv - the play died at
+# "couldn't resolve module/action 'community.general.capabilities'".
+export ANSIBLE_COLLECTIONS_PATH="$COLLECTIONS:${ANSIBLE_COLLECTIONS_PATH:-$HOME/.ansible/collections:/usr/share/ansible/collections}"
 
 CONTAINER=""
 
