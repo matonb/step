@@ -109,14 +109,34 @@ play() {
 
 # For the cases where failing is the assertion. Without this, proving that a
 # bad input is rejected would need play() not to die on it.
+#
+# A play has plenty of ways to fail that have nothing to do with the input
+# under test - an unreachable container, a role that no longer parses, an
+# assert firing somewhere else - so a non-zero exit on its own says only that
+# something went wrong. The caller names the message the failure has to carry,
+# and a play that fails for any other reason is reported as such rather than
+# quietly counted as a pass.
 play_expecting_failure() {
-    local book=$1 why=$2
-    shift 2
+    # Checked rather than left to `set -u`, which would report an unbound $3
+    # from inside this function and name neither the helper nor the caller.
+    # Non-empty as well as present: `grep -qE ""` matches any non-empty file,
+    # so an empty pattern is the vacuous assertion this argument exists to
+    # prevent, wearing the appearance of a real one.
+    [ $# -ge 3 ] && [ -n "$3" ] ||
+        die "play_expecting_failure needs a book, a reason and a non-empty pattern"
+    local book=$1 why=$2 pattern=$3
+    shift 3
     if ansible-playbook -i "$WORK/inventory.yml" "$HERE/$book" "$@" \
         >"$WORK/last.log" 2>&1; then
         cat "$WORK/last.log"
         die "$why"
     fi
+    # -- because the likely misuse is omitting the pattern, which slides the
+    # caller's own -e into its place for grep to read as an option.
+    grep -qE -- "$pattern" "$WORK/last.log" || {
+        cat "$WORK/last.log"
+        die "$why (the play did fail, but not with /$pattern/)"
+    }
 }
 
 # Ansible's recap is the only place the per-run change count is reported, and
@@ -327,8 +347,32 @@ run_scenarios() {
     # And the pin has to actually reach the package manager. Without this, a
     # separator that rendered into nothing at all would satisfy the assertion
     # above by installing the latest version and reporting no change.
+    #
+    # Both strings are ansible-core's rather than the package manager's own -
+    # apt itself says "Version '0.0.1-nonesuch' for 'step-cli' was not found"
+    # and dnf says "No match for argument", and the modules restate both. So
+    # it is ansible-core, not apt or dnf, that these track: if one of them
+    # stops matching, that is where the wording moved.
+    #
+    # What earns the match is that each restatement quotes the spec back with
+    # the separator in it, so this covers how the pin rendered rather than
+    # merely that something went wrong.
+    #
+    # Where they appear differs. The apt module fails with its string as msg;
+    # the dnf module puts its own in the failures list and leaves msg as the
+    # generic "Failed to install some of the specified packages". Both land in
+    # the log, which is what this greps, but neither is reliably the msg.
+    local cli_rejected ca_rejected
+    if [ "$family" = debian ]; then
+        cli_rejected='no available installation candidate for step-cli=0\.0\.1-nonesuch'
+        ca_rejected='no available installation candidate for step-ca=0\.0\.1-nonesuch'
+    else
+        cli_rejected='No package step-cli-0\.0\.1-nonesuch available'
+        ca_rejected='No package step-ca-0\.0\.1-nonesuch available'
+    fi
     play_expecting_failure role_step_cli.yml \
         "a version that does not exist was accepted - is the pin reaching the package manager?" \
+        "$cli_rejected" \
         -e step_cli_version=0.0.1-nonesuch
 
     # ca_server builds its own package name, from the same separator. Both
@@ -346,6 +390,7 @@ run_scenarios() {
     assert_unchanged "ca_server pinned to the version already installed"
     play_expecting_failure role_ca_server.yml \
         "a nonexistent step-ca version was accepted - is ca_server's pin reaching the package manager?" \
+        "$ca_rejected" \
         -e ca_server_ca_version=0.0.1-nonesuch
 
     # --- 5: a repository this role does not manage ------------------------
