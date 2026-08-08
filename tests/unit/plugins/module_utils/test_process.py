@@ -114,6 +114,18 @@ class TestDemoteUser:
         with pytest.raises(RuntimeError, match="stepuser"):
             demote_user("stepuser")
 
+    def test_unreadable_groups_are_reported_by_name(self, recorded_switch, monkeypatch):
+        # getgrouplist goes to NSS, so on a host backed by SSSD or LDAP this is
+        # a network call and can fail on its own. Without a message naming the
+        # user it surfaces as a bare errno from inside a privilege drop.
+        def deny(*_args):
+            raise OSError(5, "Input/output error")
+
+        monkeypatch.setattr(os, "getgrouplist", deny)
+
+        with pytest.raises(RuntimeError, match="groups for user 'stepuser'"):
+            demote_user("stepuser")
+
     def test_the_environment_describes_the_new_user(self, recorded_switch, monkeypatch):
         environment = {}
         monkeypatch.setattr(os, "environ", environment)
