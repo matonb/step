@@ -71,33 +71,61 @@ require python3
 ansible-galaxy collection list community.docker >/dev/null 2>&1 ||
     die "community.docker is required for the docker connection plugin"
 
-# Read from the role rather than restated here, so the suite cannot quietly
-# drift from the path the unit file's ConditionFileNotEmpty actually names.
-PASSWORD_FILE="$(python3 -c "
-import yaml
-print(yaml.safe_load(open('$REPO_ROOT/roles/ca_server/defaults/main.yml'))['ca_server_password_file'])
-")"
-[ -n "$PASSWORD_FILE" ] || die "could not read ca_server_password_file from the role defaults"
+# Read from the roles rather than restated here, so the suite cannot quietly
+# drift from what the roles actually use: the path the unit file's
+# ConditionFileNotEmpty names, the repository id both package managers look
+# for, and the keyring scenario 1 asserts is absent.
+#
+# One invocation that does its own checking, because a guard on the result is
+# not enough. `VAR="$(cmd)"` adopts cmd's exit status, so under `set -e` a
+# missing key aborted at the assignment with a raw traceback and never reached
+# the die() written to explain it. A key present but null was worse: python
+# prints "None", a guard on emptiness passes, and the suite spends the rest of
+# the run testing a path called None.
+ROLE_VARS="$(python3 - "$REPO_ROOT" <<'PY'
+import sys
 
-# Likewise the repository id. The directories are facts about apt and dnf, but
-# the name is the role's, and a suite that hardcoded it would keep passing
-# after the role moved the file - which is the drift these paths exist to
-# avoid in the first place.
-REPOSITORY_NAME="$(python3 -c "
 import yaml
-print(yaml.safe_load(open('$REPO_ROOT/roles/step_cli/vars/main.yml'))['step_cli_repository_name'])
-")"
-[ -n "$REPOSITORY_NAME" ] || die "could not read step_cli_repository_name from the role vars"
+
+WANTED = (
+    ("roles/ca_server/defaults/main.yml", "ca_server_password_file"),
+    ("roles/step_cli/vars/main.yml", "step_cli_repository_name"),
+    ("roles/step_cli/vars/main.yml", "step_cli_repository_keyring"),
+)
+
+root = sys.argv[1]
+for relative, key in WANTED:
+    with open(f"{root}/{relative}") as handle:
+        defined = yaml.safe_load(handle)
+    # An empty or comment-only file loads as None, and `key not in None` is a
+    # TypeError - a traceback, which is the thing this block exists to replace.
+    if not isinstance(defined, dict):
+        sys.exit(f"{relative} did not parse as a mapping")
+    if key not in defined:
+        sys.exit(f"{relative} no longer defines {key}")
+    value = defined[key]
+    if not isinstance(value, str) or not value.strip():
+        sys.exit(f"{relative} defines {key} as {value!r}, which is not a path")
+    print(f"{key}\t{value}")
+PY
+)" || die "could not read the role variables this suite is written against"
+
+# Matched on the key rather than read off in order, so adding a fourth entry
+# to WANTED without a home here is a named failure instead of three variables
+# quietly holding each other's values.
+while IFS=$'\t' read -r key value; do
+    case "$key" in
+        ca_server_password_file) PASSWORD_FILE="$value" ;;
+        step_cli_repository_name) REPOSITORY_NAME="$value" ;;
+        step_cli_repository_keyring) KEYRING="$value" ;;
+        *) die "the suite has no home for the role variable $key" ;;
+    esac
+done <<<"$ROLE_VARS"
+: "${PASSWORD_FILE:?the role variables did not yield ca_server_password_file}"
+: "${REPOSITORY_NAME:?the role variables did not yield step_cli_repository_name}"
+: "${KEYRING:?the role variables did not yield step_cli_repository_keyring}"
 DEB_SOURCES="/etc/apt/sources.list.d/$REPOSITORY_NAME.list"
 EL_REPO="/etc/yum.repos.d/$REPOSITORY_NAME.repo"
-
-# And the keyring, for the same reason: scenario 1 asserts it is absent, which
-# a path written out here would keep claiming after the role moved it.
-KEYRING="$(python3 -c "
-import yaml
-print(yaml.safe_load(open('$REPO_ROOT/roles/step_cli/vars/main.yml'))['step_cli_repository_keyring'])
-")"
-[ -n "$KEYRING" ] || die "could not read step_cli_repository_keyring from the role vars"
 
 # The role resolves as matonb.step.ca_server, so the checkout has to be
 # reachable under that path. A symlink is enough for Ansible itself.
@@ -206,7 +234,10 @@ assert_task_ran() {
 
 in_container() { docker exec "$CONTAINER" "$@"; }
 
-unit_property() { in_container systemctl show step-ca -p "$1" --value | tr -d '\r'; }
+unit_property() {
+    in_container systemctl show step-ca -p "$1" --value | tr -d '\r' ||
+        die "could not read $1 from systemd - is the container still up?"
+}
 
 assert_property() {
     local property=$1 expected=$2 message=$3 actual
@@ -383,12 +414,12 @@ run_scenarios() {
     log "[$family] 4. A pinned version is accepted"
     local installed
     if [ "$family" = debian ]; then
-        installed="$(in_container dpkg-query -W -f='${Version}' step-cli)"
+        installed="$(in_container dpkg-query -W -f='${Version}' step-cli)" || installed=""
     else
         # %{VERSION} alone, which is the form the docs describe for RedHat.
         # dnf takes the revision too, so asking for it here would have left
         # the documented spelling untested.
-        installed="$(in_container rpm -q --qf '%{VERSION}' step-cli)"
+        installed="$(in_container rpm -q --qf '%{VERSION}' step-cli)" || installed=""
     fi
     [ -n "$installed" ] || die "could not read the installed step-cli version"
     play role_step_cli.yml -e "step_cli_version=$installed"
@@ -431,9 +462,9 @@ run_scenarios() {
     # render to a bare "step-ca" and every scenario would still pass.
     local installed_ca
     if [ "$family" = debian ]; then
-        installed_ca="$(in_container dpkg-query -W -f='${Version}' step-ca)"
+        installed_ca="$(in_container dpkg-query -W -f='${Version}' step-ca)" || installed_ca=""
     else
-        installed_ca="$(in_container rpm -q --qf '%{VERSION}' step-ca)"
+        installed_ca="$(in_container rpm -q --qf '%{VERSION}' step-ca)" || installed_ca=""
     fi
     [ -n "$installed_ca" ] || die "could not read the installed step-ca version"
     play role_ca_server.yml -e "ca_server_ca_version=$installed_ca"
