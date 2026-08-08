@@ -253,7 +253,8 @@ assert_property() {
 }
 
 start_host() {
-    local family=$1 dockerfile=$2 image="matonb-step-role-$family"
+    local family=$1 dockerfile=$2
+    local image="matonb-step-role-$family"
     CONTAINER="matonb-step-it-role-$family"
     CONTAINERS+=("$CONTAINER")
 
@@ -420,6 +421,7 @@ run_scenarios() {
     log "[$family] 4. A pinned version is accepted"
     local installed
     if [ "$family" = debian ]; then
+        # shellcheck disable=SC2016  # ${Version} is dpkg-query's syntax, not the shell's
         installed="$(in_container dpkg-query -W -f='${Version}' step-cli)" || installed=""
     else
         # %{VERSION} alone, which is the form the docs describe for RedHat.
@@ -468,6 +470,7 @@ run_scenarios() {
     # render to a bare "step-ca" and every scenario would still pass.
     local installed_ca
     if [ "$family" = debian ]; then
+        # shellcheck disable=SC2016  # ${Version} is dpkg-query's syntax, not the shell's
         installed_ca="$(in_container dpkg-query -W -f='${Version}' step-ca)" || installed_ca=""
     else
         installed_ca="$(in_container rpm -q --qf '%{VERSION}' step-ca)" || installed_ca=""
