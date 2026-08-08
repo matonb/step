@@ -91,6 +91,14 @@ print(yaml.safe_load(open('$REPO_ROOT/roles/step_cli/vars/main.yml'))['step_cli_
 DEB_SOURCES="/etc/apt/sources.list.d/$REPOSITORY_NAME.list"
 EL_REPO="/etc/yum.repos.d/$REPOSITORY_NAME.repo"
 
+# And the keyring, for the same reason: scenario 1 asserts it is absent, which
+# a path written out here would keep claiming after the role moved it.
+KEYRING="$(python3 -c "
+import yaml
+print(yaml.safe_load(open('$REPO_ROOT/roles/step_cli/vars/main.yml'))['step_cli_repository_keyring'])
+")"
+[ -n "$KEYRING" ] || die "could not read step_cli_repository_keyring from the role vars"
+
 # The role resolves as matonb.step.ca_server, so the checkout has to be
 # reachable under that path. A symlink is enough for Ansible itself.
 COLLECTIONS="$WORK/collections"
@@ -255,15 +263,57 @@ run_scenarios() {
     local family=$1
 
     # --- 1: check mode against a host that has nothing --------------------
-    # The hardest case, and the one three separate guards exist for: the
+    # The hardest case, and the one four separate guards exist for. The
     # package is not installed, so there is no binary for setcap to read and
-    # no unit for systemd_service to find. Nothing may be written either.
+    # no unit for systemd_service to find; the repository is not configured,
+    # so neither role's install task can ask the package manager anything and
+    # both sit behind a stat. Nothing may be written either - not the binary,
+    # not the unit, and not the repository or the key that signs it.
     log "[$family] 1. Check mode on an untouched host"
     play role_ca_server.yml --check
     in_container test ! -e /usr/bin/step-ca ||
         die "check mode installed step-ca"
     in_container test ! -e /etc/systemd/system/step-ca.service ||
         die "check mode wrote the unit file"
+
+    # The repository too, which "nothing may be written" was silent about even
+    # though it is the harder half.
+    #
+    # Each of the three was checked by reinstating the defect it is meant to
+    # catch, because an assertion here that cannot fail is worse than none -
+    # it reads as cover. What it took differs, and the recipes are recorded
+    # so the next person can reproduce them rather than assume they are dead:
+    #
+    #   RedHat repo    one edit. check_mode: false on yum_repository, which
+    #                  nothing gates, and the file appears.
+    #   Debian keyring three. The block gate skips the whole block on an
+    #                  untouched host, so forcing the get_url alone does
+    #                  nothing: the gate has to be widened, and the
+    #                  ca-certificates install forced, before the fetch can
+    #                  even reach an HTTPS host.
+    #   Debian repo    six - the whole "configure the repository for real so
+    #                  --check can report on packages" change. Writing the
+    #                  file without also refreshing the cache does not test
+    #                  this: apt then has a repository it has never read, and
+    #                  the play dies at ca_server with "No package matching
+    #                  'step-ca' is available" before reaching here. Forcing
+    #                  the refresh as well - which needs check_mode: false of
+    #                  its own, since the apt module makes update_cache a
+    #                  no-op under --check whatever its `when` says - leaves
+    #                  the play green and this the only thing that catches it.
+    #
+    # RedHat does not cascade that way because dnf resolves against metadata
+    # it fetches on demand, where apt resolves against lists it refreshes only
+    # when told.
+    if [ "$family" = debian ]; then
+        in_container test ! -e "$DEB_SOURCES" ||
+            die "check mode wrote the apt sources file"
+        in_container test ! -e "$KEYRING" ||
+            die "check mode installed the repository signing key"
+    else
+        in_container test ! -e "$EL_REPO" ||
+            die "check mode wrote the yum repository"
+    fi
 
     # --- 2: a fresh host, through ca_server alone -------------------------
     # ca_server is applied to a host that has had nothing, so the smallstep

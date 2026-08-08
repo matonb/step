@@ -68,7 +68,7 @@ leaves the containers up for inspection.
 
 | # | Scenario | What it pins |
 | --- | --- | --- |
-| 1 | Check mode on an untouched host | Nothing installed, no unit written; the guards that make `--check` survive a host with no step-ca binary and no repository |
+| 1 | Check mode on an untouched host | Nothing installed, no unit written, and neither the repository definition nor the signing key put on disk; the guards that make `--check` survive a host with no step-ca binary and no repository |
 | 2 | Fresh host, `ca_server` alone | Unit written and enabled, `ConditionResult=no`, the `Restart` handler fires without failing the play — **and the CLI is present**, which is what makes the `step_cli` dependency load bearing |
 | 3 | `step_cli` after `ca_server` | No changes, and one `deb` line: the two roles must not rewrite each other's repository |
 | 4 | A pinned version | The family-specific separator — apt wants `name=version`, dnf `name-version` — plus a nonexistent version failing, so an empty pin cannot pass |
