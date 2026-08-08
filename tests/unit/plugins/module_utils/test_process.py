@@ -4,8 +4,8 @@
 
 import os
 import pwd
+import signal
 import subprocess
-import time
 
 import pytest
 
@@ -52,7 +52,8 @@ def recorded_switch(monkeypatch):
     calls = []
 
     monkeypatch.setattr(pwd, "getpwnam", lambda _name: FakePasswd())
-    monkeypatch.setattr(os, "initgroups", lambda *args: calls.append(("initgroups", args)), raising=False)
+    monkeypatch.setattr(os, "getgrouplist", lambda *_args: [5678, 27])
+    monkeypatch.setattr(os, "setgroups", lambda *args: calls.append(("setgroups", args)))
     monkeypatch.setattr(os, "setgid", lambda *args: calls.append(("setgid", args)))
     monkeypatch.setattr(os, "setuid", lambda *args: calls.append(("setuid", args)))
     monkeypatch.setattr(os, "environ", {})
@@ -69,21 +70,21 @@ class TestDemoteUser:
         # is what makes this a privilege drop rather than a uid change.
         demote_user("stepuser")
 
-        assert "initgroups" in [name for name, arguments in recorded_switch]
+        assert "setgroups" in [name for name, arguments in recorded_switch]
 
     def test_privileges_are_dropped_in_a_workable_order(self, recorded_switch):
         # Order is the whole game: setuid last, because once the uid is no
-        # longer root neither initgroups nor setgid is permitted, and the
+        # longer root neither setgroups nor setgid is permitted, and the
         # process would be left holding what it meant to drop.
         demote_user("stepuser")
 
-        assert [name for name, arguments in recorded_switch] == ["initgroups", "setgid", "setuid"]
+        assert [name for name, arguments in recorded_switch] == ["setgroups", "setgid", "setuid"]
 
     def test_the_target_users_own_ids_are_used(self, recorded_switch):
         demote_user("stepuser")
 
         by_name = dict(recorded_switch)
-        assert by_name["initgroups"] == ("stepuser", 5678)
+        assert by_name["setgroups"] == ([5678, 27],)
         assert by_name["setgid"] == (5678,)
         assert by_name["setuid"] == (1234,)
 
@@ -96,12 +97,15 @@ class TestDemoteUser:
         with pytest.raises(RuntimeError, match="nosuchuser"):
             demote_user("nosuchuser")
 
-    def test_a_refused_switch_is_reported_by_name(self, monkeypatch):
+    def test_a_refused_switch_is_reported_by_name(self, recorded_switch, monkeypatch):
         # The realistic cause is running without root, where setgid is denied.
         # The OSError alone says "Operation not permitted" and names no user.
-        monkeypatch.setattr(pwd, "getpwnam", lambda _name: FakePasswd())
-        monkeypatch.setattr(os, "initgroups", lambda *_args: None, raising=False)
-
+        #
+        # Built on the fixture so every id-changing call stays substituted. An
+        # earlier version patched only setgid and left os.setuid real, which
+        # was harmless only because setgid failed first - exactly the ordering
+        # the test above exists to catch. Under ansible-test units --docker,
+        # as root, that would have demoted the test runner mid-suite.
         def deny(*_args):
             raise OSError(1, "Operation not permitted")
 
@@ -158,17 +162,98 @@ class TestDemotionHook:
         assert _demotion_hook(None) is None
         assert _demotion_hook("") is None
 
-    def test_a_username_produces_a_hook_that_demotes_to_it(self, monkeypatch):
-        demoted = []
-        monkeypatch.setattr(
-            "ansible_collections.matonb.step.plugins.module_utils.process.demote_user",
-            demoted.append,
-        )
-
+    def test_a_username_produces_a_hook_that_drops_to_it(self, recorded_switch):
         hook = _demotion_hook("stepuser")
+
+        # Nothing has happened yet: the hook runs in the child, after the fork.
+        assert recorded_switch == []
+
         hook()
 
-        assert demoted == ["stepuser"]
+        assert [name for name, arguments in recorded_switch] == ["setgroups", "setgid", "setuid"]
+
+    def test_the_lookup_happens_before_the_fork(self, recorded_switch, monkeypatch):
+        # subprocess reports anything a preexec_fn raises as a bare "Exception
+        # occurred in preexec_fn.", so a name resolved in the child is a name
+        # whose failure the operator never sees. Resolving here means the
+        # RuntimeError still says which user was wrong.
+        looked_up = []
+        monkeypatch.setattr(pwd, "getpwnam", lambda name: looked_up.append(name) or FakePasswd())
+
+        _demotion_hook("stepuser")
+
+        assert looked_up == ["stepuser"]
+
+    def test_an_unknown_user_is_refused_before_anything_forks(self, monkeypatch):
+        def raise_key_error(name):
+            raise KeyError(name)
+
+        monkeypatch.setattr(pwd, "getpwnam", raise_key_error)
+
+        with pytest.raises(RuntimeError, match="nosuchuser"):
+            _demotion_hook("nosuchuser")
+
+
+class TestTheHookReachesSubprocess:
+    """The wire between _demotion_hook and Popen.
+
+    Both halves were tested in isolation and the wire between them was not, so
+    deleting `preexec_fn=_demotion_hook(username)` from both call sites left
+    the whole suite green - a build that never demoted at all. That is the
+    defect this file exists for, so it is asserted directly.
+    """
+
+    @staticmethod
+    def _captured_popen(monkeypatch):
+        """Capture the kwargs run_command hands to Popen.
+
+        Args:
+            monkeypatch: pytest's monkeypatch fixture.
+
+        Returns:
+            dict: filled with the keyword arguments of the next Popen call.
+        """
+        captured = {}
+        real_popen = subprocess.Popen
+
+        class CapturingPopen(real_popen):
+            def __init__(self, *args, **kwargs):
+                captured.update(kwargs)
+                super().__init__(*args, **kwargs)
+
+        monkeypatch.setattr(subprocess, "Popen", CapturingPopen)
+        return captured
+
+    def test_a_username_reaches_popen_as_a_preexec_fn(self, recorded_switch, monkeypatch):
+        captured = self._captured_popen(monkeypatch)
+        monkeypatch.setattr(os, "geteuid", lambda: 0)
+
+        run_command(["echo", "hello"], username="stepuser")
+
+        assert captured["preexec_fn"] is not None
+
+        # And it is the demotion, not merely some callable: run it here, where
+        # the ids are substituted, and see the drop happen.
+        captured["preexec_fn"]()
+        assert [name for name, arguments in recorded_switch] == ["setgroups", "setgid", "setuid"]
+
+    def test_no_username_reaches_popen_as_no_hook(self, monkeypatch):
+        captured = self._captured_popen(monkeypatch)
+
+        run_command(["echo", "hello"])
+
+        assert captured["preexec_fn"] is None
+
+    def test_the_timeout_path_wires_it_too(self, recorded_switch, monkeypatch):
+        # Two Popen call sites, and only one of them is on the timeout path.
+        captured = self._captured_popen(monkeypatch)
+        monkeypatch.setattr(os, "geteuid", lambda: 0)
+
+        run_command(["echo", "hello"], username="stepuser", timeout=10)
+
+        assert captured["preexec_fn"] is not None
+        captured["preexec_fn"]()
+        assert [name for name, arguments in recorded_switch] == ["setgroups", "setgid", "setuid"]
 
 
 class TestValidateUserSwitch:
@@ -196,6 +281,25 @@ class TestCompletedProcess:
         result = _create_completed_process(["step"], 0, "\x1b[32mok\x1b[0m", None, text=True, strip_ansi=True)
 
         assert result.stdout == "ok"
+
+    def test_stderr_is_sanitized_as_well_as_stdout(self):
+        # The failure message an operator reads is built from stderr, so colour
+        # left in it is colour in the module's reported error.
+        result = _create_completed_process(["step"], 1, None, "\x1b[31mboom\x1b[0m", text=True, strip_ansi=True)
+
+        assert result.stderr == "boom"
+
+    def test_the_command_is_carried_into_the_result(self):
+        result = _create_completed_process(["step", "version"], 0, "", "", text=True, strip_ansi=True)
+
+        assert result.args == ["step", "version"]
+
+    def test_strip_ansi_false_is_honoured(self):
+        # Nothing else threads this flag all the way through, so a
+        # _create_completed_process that ignored it would go unnoticed.
+        result = _create_completed_process(["step"], 0, "\x1b[32mok", None, text=True, strip_ansi=False)
+
+        assert result.stdout == "[32mok"
 
     def test_bytes_are_left_alone(self):
         # sanitize_output works on str. Handing it bytes would raise, so the
@@ -273,6 +377,11 @@ class TestRunCommand:
 
         assert result.stdout.split() == ["one", "two"]
 
+    def test_strip_ansi_false_reaches_the_result(self):
+        result = run_command(["printf", "\x1b[32mok"], strip_ansi=False)
+
+        assert result.stdout == "[32mok"
+
     def test_output_can_be_left_as_bytes(self):
         result = run_command(["echo", "hello"], text=False)
 
@@ -301,17 +410,29 @@ class TestRunWithTimeout:
         with pytest.raises(CommandTimeoutError, match="timed out after"):
             run_command(["sleep", "5"], timeout=0.2)
 
-    def test_the_timed_out_command_is_actually_killed(self, tmp_path):
+    def test_the_timed_out_command_is_actually_killed(self, monkeypatch):
         # Raising while leaving the process running would satisfy the test
         # above and still leak a step process holding the CA's files open.
-        # The marker is written only if the command survived its timeout.
-        marker = tmp_path / "survived"
+        #
+        # Asserted from the signal the child died of rather than by waiting to
+        # see whether it did something: -SIGKILL can only come from the kill()
+        # in the timeout path, and it costs no wall clock. An earlier version
+        # slept 1.5s watching for a marker file and was the slowest thing in
+        # the suite by an order of magnitude.
+        started = []
+        real_popen = subprocess.Popen
+
+        class CapturingPopen(real_popen):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                started.append(self)
+
+        monkeypatch.setattr(subprocess, "Popen", CapturingPopen)
 
         with pytest.raises(CommandTimeoutError):
-            run_command(["sh", "-c", f"sleep 1; touch {marker}"], timeout=0.2)
+            run_command(["sleep", "5"], timeout=0.2)
 
-        time.sleep(1.5)
-        assert not marker.exists()
+        assert started[0].returncode == -signal.SIGKILL
 
     def test_a_failure_inside_the_timeout_still_reports_normally(self):
         with pytest.raises(RuntimeError, match="return code 1"):
