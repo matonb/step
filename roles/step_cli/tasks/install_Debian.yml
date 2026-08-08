@@ -66,6 +66,21 @@
 #
 # On a host that already has the repository, check mode runs these and reports
 # drift as it should.
+#
+# This makes the two families answer --check differently on a fresh host, and
+# that is deliberate rather than an oversight waiting to be tidied up. RedHat
+# has no equivalent gate because it needs none: yum_repository composes a file
+# and touches no network, so it can run under --check and report what it would
+# write. get_url cannot - it issues a real request even in check mode, and here
+# it would make it against a trust store that only exists in simulation. The
+# choice is between a family reporting one task less and a family failing
+# outright, and reporting less wins.
+#
+# Levelling them up would mean either giving RedHat a gate it does not need, or
+# finding something for Debian to report that does not involve reaching the
+# network. Neither is worth the machinery: this run cannot say anything about
+# the packages on either family, which is what an operator is running --check
+# to find out.
 - name: Configure the smallstep repository
   when:
     - step_cli_manage_repository | bool

@@ -2,6 +2,15 @@
 # Two keys, because two different things are signed and dnf checks them
 # separately: repo_gpgcheck against the metadata key, gpgcheck against
 # smallstep's package-signing key. Both are published, so both default on.
+#
+# Ungated, unlike the Debian equivalent, which sits behind a block that check
+# mode skips on a host that has never run this role. The difference is real and
+# intended: this task composes a file and fetches nothing, so under --check it
+# reports what it would write and costs nothing, where Debian's key fetch would
+# reach the network against a trust store that is itself only simulated. See
+# install_Debian.yml for the whole of it. The consequence is that --check on a
+# fresh host mentions the repository here and not there; neither can say
+# anything about the packages, which is the part that matters.
 - name: Enable the smallstep yum repository
   become: true
   ansible.builtin.yum_repository:

@@ -587,6 +587,16 @@ honours check mode, so the play would otherwise abort rather than report what it
 would do. On a host that has already run the role, `--check` reports drift
 normally.
 
+A first `--check` against a host that has never run these roles is worth
+reading with that in mind. Neither family can report on `step-ca` or `step-cli`,
+because the repository they come from does not exist yet and the package manager
+has nothing to answer with — the alternative is failing outright, which says
+less. The two differ in one detail: RedHat reports that it would write the
+repository file, Debian does not, because installing the signing key means a
+network fetch that check mode cannot honestly simulate against a trust store the
+same run has only pretended to install. Run once for real, and `--check`
+reports drift on everything thereafter.
+
 ### Example
 
 ```yaml

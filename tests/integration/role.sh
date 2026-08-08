@@ -24,8 +24,14 @@ CA_PASSWORD="integration-test-password"
 # family:dockerfile. Both are exercised in full. The roles install by package
 # name from one repository now, but the plumbing around it still diverges - an
 # apt sources file and a keyring against a yum_repository stanza, support
-# packages on the Debian side only, and a verification switch that RedHat
-# honours and Debian refuses - so testing one proves little about the other.
+# packages on the Debian side only, a verification switch that RedHat honours
+# and Debian refuses, and a first --check that mentions the repository on
+# RedHat and not on Debian - so testing one proves little about the other.
+#
+# That last one is intended rather than a gap in either the roles or this
+# suite; install_Debian.yml carries the reasoning. Scenario 1 asserts what both
+# families must not do, which is write anything, and leaves what they report to
+# the family that can report it.
 FAMILIES=(
     "debian:Dockerfile.debian"
     "redhat:Dockerfile.redhat"
