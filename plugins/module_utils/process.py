@@ -344,7 +344,13 @@ def _run_with_timeout(
         return result
 
     finally:
-        # Ensure the process is terminated
+        # A no-op on every path above: communicate() has set returncode by the
+        # time we arrive, and terminate() skips a process already known to have
+        # died. It earns its place for the paths *not* above - communicate()
+        # raising something other than TimeoutExpired, where the child is still
+        # running and would otherwise be left behind. ProcessLookupError covers
+        # it exiting between that failure and this call, which is why the
+        # handler stays even though the tests cannot reach it.
         try:
             process.terminate()
         except ProcessLookupError:
