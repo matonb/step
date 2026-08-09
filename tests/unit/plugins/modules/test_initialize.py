@@ -4,8 +4,6 @@
 
 import json
 import os
-import subprocess
-import sys
 
 import pytest
 
@@ -22,6 +20,11 @@ from ansible_collections.matonb.step.plugins.modules.initialize import (
     unusable_paths,
     validate_admin_options,
 )
+
+# Printed on stderr by the stubbed `step` and quoted back in the module's
+# failure message, so a test can prove the stub - and therefore the environment
+# carrying it - actually reached the child process.
+STEP_STUB_MARKER = "stub-step-ca-refused"
 
 
 class ModuleFailedError(Exception):
@@ -423,45 +426,51 @@ def stub_step_binary(tmp_path):
     opening /dev/tty to prompt for DNS names, which blocks until the command
     timeout. It also couples the assertion to step continuing to refuse to run
     non-interactively.
+
+    The stub announces itself on stderr, which the module quotes back in its
+    failure message. Failing silently would not be enough: the real step fails
+    too, so `failed is True` holds whether or not this stub was ever on PATH,
+    and nothing would notice the env that puts it there going missing.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     stub = bin_dir / "step"
-    stub.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    stub.write_text(f"#!/bin/sh\necho {STEP_STUB_MARKER} >&2\nexit 1\n", encoding="utf-8")
     stub.chmod(0o755)
     return {"PATH": os.pathsep.join([str(bin_dir), os.environ.get("PATH", "")])}
 
 
-def run_module(step_path, password_file, extra_env=None, **requested):
-    """Execute the module the way Ansible does and return its result.
+@pytest.fixture
+def run_initialize(run_module):
+    """Run the initialize module against a step path and return its result.
 
     Driving main() is the only way to catch #35: the defect was purely the
     order of two calls, so every test of the functions themselves passed with
     it in place.
+
+    Environment handling - the PYTHONPATH filter and why the child needs it -
+    lives in the `run_module` fixture in tests/unit/conftest.py.
+
+    Returns:
+        callable: (step_path, password_file, extra_env=None, **requested) ->
+            dict, the module's parsed result. `extra_env` reaches the child's
+            environment, which is how stub_step_binary puts its `step` on PATH.
     """
-    args = json.dumps(
-        {
-            "ANSIBLE_MODULE_ARGS": {
+
+    def _run(step_path, password_file, extra_env=None, **requested):
+        return run_module(
+            initialize,
+            {
                 "name": "Test CA",
                 "path": str(step_path),
                 "password_file": str(password_file),
                 "provisioner_password_file": str(password_file),
                 **requested,
-            }
-        }
-    )
-    collection_paths = [path for path in sys.path if path and os.path.isdir(os.path.join(path, "ansible_collections"))]
-    completed = subprocess.run(
-        [sys.executable, initialize.__file__],
-        input=args,
-        capture_output=True,
-        text=True,
-        check=False,
-        env={**os.environ, "PYTHONPATH": os.pathsep.join(collection_paths), **(extra_env or {})},
-    )
-    if not completed.stdout:
-        raise AssertionError(f"module produced no result (exit {completed.returncode}):\n{completed.stderr}")
-    return json.loads(completed.stdout)
+            },
+            extra_env=extra_env,
+        )
+
+    return _run
 
 
 class TestCheckModeNeverDeletes:
@@ -473,20 +482,20 @@ class TestCheckModeNeverDeletes:
     regenerated.
     """
 
-    def test_check_mode_with_force_leaves_an_existing_ca_intact(self, tmp_path):
+    def test_check_mode_with_force_leaves_an_existing_ca_intact(self, tmp_path, run_initialize):
         ca = tmp_path / "ca"
         ca.mkdir()
         files = build_ca(ca)
         password_file = tmp_path / "pw"
         password_file.write_text("pw", encoding="utf-8")
 
-        result = run_module(ca, password_file, force=True, _ansible_check_mode=True)
+        result = run_initialize(ca, password_file, force=True, _ansible_check_mode=True)
 
         assert result["changed"] is True
         assert [path.name for path in files if not path.exists()] == []
         assert all("PRECIOUS-" in path.read_text(encoding="utf-8") for path in files)
 
-    def test_check_mode_with_force_says_it_would_delete(self, tmp_path):
+    def test_check_mode_with_force_says_it_would_delete(self, tmp_path, run_initialize):
         # Reporting `changed` is not enough: an operator running --check to find
         # out what force does needs to be told the CA goes away.
         ca = tmp_path / "ca"
@@ -495,36 +504,36 @@ class TestCheckModeNeverDeletes:
         password_file = tmp_path / "pw"
         password_file.write_text("pw", encoding="utf-8")
 
-        result = run_module(ca, password_file, force=True, _ansible_check_mode=True)
+        result = run_initialize(ca, password_file, force=True, _ansible_check_mode=True)
 
         assert "deleted" in result["msg"]
 
-    def test_check_mode_without_force_still_refuses_a_partial_ca(self, tmp_path):
+    def test_check_mode_without_force_still_refuses_a_partial_ca(self, tmp_path, run_initialize):
         ca = tmp_path / "ca"
         ca.mkdir()
         files = build_ca(ca, names=CA_FILE_NAMES[:3])
         password_file = tmp_path / "pw"
         password_file.write_text("pw", encoding="utf-8")
 
-        result = run_module(ca, password_file, _ansible_check_mode=True)
+        result = run_initialize(ca, password_file, _ansible_check_mode=True)
 
         assert "not a working CA" in result["msg"]
         assert all(path.exists() for path in files)
 
-    def test_check_mode_on_an_empty_directory_creates_nothing(self, tmp_path):
+    def test_check_mode_on_an_empty_directory_creates_nothing(self, tmp_path, run_initialize):
         ca = tmp_path / "ca"
         ca.mkdir()
         password_file = tmp_path / "pw"
         password_file.write_text("pw", encoding="utf-8")
 
-        result = run_module(ca, password_file, _ansible_check_mode=True)
+        result = run_initialize(ca, password_file, _ansible_check_mode=True)
 
         assert result["changed"] is True
         assert list(ca.iterdir()) == []
 
 
 class TestForceOutsideCheckMode:
-    def test_force_still_removes_an_existing_ca(self, tmp_path):
+    def test_force_still_removes_an_existing_ca(self, tmp_path, run_initialize):
         # The other half of the fix: moving the deletion below the check-mode
         # guard must not stop it happening on a real run. The stubbed step
         # fails, so nothing is recreated and the deletion is observable.
@@ -534,12 +543,17 @@ class TestForceOutsideCheckMode:
         password_file = tmp_path / "pw"
         password_file.write_text("pw", encoding="utf-8")
 
-        result = run_module(ca, password_file, force=True, extra_env=stub_step_binary(tmp_path))
+        result = run_initialize(ca, password_file, force=True, extra_env=stub_step_binary(tmp_path))
 
         assert result["failed"] is True
+        # Pins `extra_env` reaching the child. Every other stubbed test either
+        # fails before step is reached at all, or asserts a failure the real
+        # step would produce too, so the forwarding could be dropped without any
+        # of them noticing - exactly the regression a shared helper makes easy.
+        assert STEP_STUB_MARKER in result["msg"]
         assert [path for path in files if path.exists()] == []
 
-    def test_without_force_a_real_run_refuses_a_partial_ca(self, tmp_path):
+    def test_without_force_a_real_run_refuses_a_partial_ca(self, tmp_path, run_initialize):
         # The production path. Check mode is covered above; if the guard on the
         # no-force branch were weakened, only this test would notice - and this
         # is the run that would actually overwrite a PKI nobody asked to replace.
@@ -549,7 +563,7 @@ class TestForceOutsideCheckMode:
         password_file = tmp_path / "pw"
         password_file.write_text("pw", encoding="utf-8")
 
-        result = run_module(ca, password_file, extra_env=stub_step_binary(tmp_path))
+        result = run_initialize(ca, password_file, extra_env=stub_step_binary(tmp_path))
 
         # The message matters, not just the failure: with the guard removed the
         # module reaches step, which also fails, so asserting `failed` alone
@@ -574,30 +588,30 @@ class TestAlreadyInitialized:
         password_file.write_text("pw", encoding="utf-8")
         return ca, password_file, files
 
-    def test_a_complete_ca_reports_ok_and_changes_nothing(self, tmp_path):
+    def test_a_complete_ca_reports_ok_and_changes_nothing(self, tmp_path, run_initialize):
         ca, password_file, files = self.build(tmp_path)
 
-        result = run_module(ca, password_file, extra_env=stub_step_binary(tmp_path))
+        result = run_initialize(ca, password_file, extra_env=stub_step_binary(tmp_path))
 
         assert result["changed"] is False
         assert "already initialized" in result["msg"]
         assert all("PRECIOUS-" in path.read_text(encoding="utf-8") for path in files)
 
-    def test_the_same_holds_in_check_mode(self, tmp_path):
+    def test_the_same_holds_in_check_mode(self, tmp_path, run_initialize):
         ca, password_file, files = self.build(tmp_path)
 
-        result = run_module(ca, password_file, _ansible_check_mode=True)
+        result = run_initialize(ca, password_file, _ansible_check_mode=True)
 
         assert result["changed"] is False
         assert all(path.exists() for path in files)
 
-    def test_the_no_op_reports_the_mode_of_the_ca_on_disk(self, tmp_path):
+    def test_the_no_op_reports_the_mode_of_the_ca_on_disk(self, tmp_path, run_initialize):
         # Not the mode that was asked for. A task requesting remote_management
         # against a config-mode CA must not be told it got one: the key is what
         # examples/provisioner_admin_mode.yml asserts on.
         ca, password_file, _files = self.build(tmp_path, enable_admin=False)
 
-        result = run_module(
+        result = run_initialize(
             ca,
             password_file,
             remote_management=True,
@@ -609,20 +623,20 @@ class TestAlreadyInitialized:
         # no Admin API has no super administrator to name.
         assert result["admin_subject"] is None
 
-    def test_an_admin_ca_is_reported_as_admin(self, tmp_path):
+    def test_an_admin_ca_is_reported_as_admin(self, tmp_path, run_initialize):
         ca, password_file, _files = self.build(tmp_path, enable_admin=True)
 
-        result = run_module(ca, password_file, extra_env=stub_step_binary(tmp_path))
+        result = run_initialize(ca, password_file, extra_env=stub_step_binary(tmp_path))
 
         assert result["management_mode"] == "admin"
         # step's own default, and the same value the initializing path reports,
         # so the second run of a task does not contradict the first.
         assert result["admin_subject"] == "step"
 
-    def test_a_supplied_admin_subject_is_echoed(self, tmp_path):
+    def test_a_supplied_admin_subject_is_echoed(self, tmp_path, run_initialize):
         ca, password_file, _files = self.build(tmp_path, enable_admin=True)
 
-        result = run_module(
+        result = run_initialize(
             ca,
             password_file,
             remote_management=True,
@@ -632,14 +646,14 @@ class TestAlreadyInitialized:
 
         assert result["admin_subject"] == "ops"
 
-    def test_an_unparseable_ca_json_is_not_a_finished_ca(self, tmp_path):
+    def test_an_unparseable_ca_json_is_not_a_finished_ca(self, tmp_path, run_initialize):
         # Every file is present, so the old check called this complete and let
         # the play carry on against a CA that cannot start. Existing is not the
         # same as working.
         ca, password_file, _files = self.build(tmp_path)
         (ca / "config" / "ca.json").write_text("{ this is not json", encoding="utf-8")
 
-        result = run_module(ca, password_file, extra_env=stub_step_binary(tmp_path))
+        result = run_initialize(ca, password_file, extra_env=stub_step_binary(tmp_path))
 
         assert result["failed"] is True
         assert "cannot read" in result["msg"]
@@ -647,25 +661,25 @@ class TestAlreadyInitialized:
         # be put back; force would delete the root key to clear a syntax error.
         assert "root key" not in result["msg"]
 
-    def test_a_ca_json_of_the_wrong_shape_is_not_a_finished_ca(self, tmp_path):
+    def test_a_ca_json_of_the_wrong_shape_is_not_a_finished_ca(self, tmp_path, run_initialize):
         # Valid JSON, wrong document. read_authority separates "nothing is
         # configured" from "this is not the file you think it is".
         ca, password_file, _files = self.build(tmp_path)
         (ca / "config" / "ca.json").write_text(json.dumps({"authority": "nonsense"}), encoding="utf-8")
 
-        result = run_module(ca, password_file, extra_env=stub_step_binary(tmp_path))
+        result = run_initialize(ca, password_file, extra_env=stub_step_binary(tmp_path))
 
         assert result["failed"] is True
         assert "cannot read" in result["msg"]
 
-    def test_a_pki_only_directory_reports_the_requested_mode(self, tmp_path):
+    def test_a_pki_only_directory_reports_the_requested_mode(self, tmp_path, run_initialize):
         # The one case with no ca.json to read, so the request is all there is.
         # Asking for admin proves the fallback runs: a hard-coded "config", or
         # one that failed on the missing file, would both be caught here.
         names = tuple(name for name in CA_FILE_NAMES if not name.startswith("config/"))
         ca, password_file, _files = self.build(tmp_path, names=names)
 
-        result = run_module(
+        result = run_initialize(
             ca,
             password_file,
             pki=True,
@@ -676,47 +690,47 @@ class TestAlreadyInitialized:
         assert result["management_mode"] == "admin"
         assert result["admin_subject"] == "step"
 
-    def test_a_pki_only_directory_is_complete_without_ca_json(self, tmp_path):
+    def test_a_pki_only_directory_is_complete_without_ca_json(self, tmp_path, run_initialize):
         # `step ca init --pki` writes the PKI and stops, so config/ca.json and
         # config/defaults.json never appear and their absence is not a
         # half-built CA.
         names = tuple(name for name in CA_FILE_NAMES if not name.startswith("config/"))
         ca, password_file, files = self.build(tmp_path, names=names)
 
-        result = run_module(ca, password_file, pki=True, extra_env=stub_step_binary(tmp_path))
+        result = run_initialize(ca, password_file, pki=True, extra_env=stub_step_binary(tmp_path))
 
         assert result["changed"] is False
         assert all(path.exists() for path in files)
 
-    def test_pki_does_not_switch_off_the_checks_on_a_full_ca(self, tmp_path):
+    def test_pki_does_not_switch_off_the_checks_on_a_full_ca(self, tmp_path, run_initialize):
         # The --pki branch is entered because there is no ca.json to consult,
         # not because the task asked for it. Otherwise one option would let a
         # broken CA through every integrity check the module has.
         ca, password_file, _files = self.build(tmp_path)
         (ca / "config" / "ca.json").write_text("{ this is not json", encoding="utf-8")
 
-        result = run_module(ca, password_file, pki=True, extra_env=stub_step_binary(tmp_path))
+        result = run_initialize(ca, password_file, pki=True, extra_env=stub_step_binary(tmp_path))
 
         assert result["failed"] is True
         assert "cannot read" in result["msg"]
 
-    def test_a_pki_directory_missing_key_material_is_refused(self, tmp_path):
+    def test_a_pki_directory_missing_key_material_is_refused(self, tmp_path, run_initialize):
         # --pki is the one case judged against a fixed list, because it writes
         # no ca.json to ask. That list still has to be enforced: without this
         # the whole --pki branch could be deleted and every other test passes.
         names = tuple(name for name in CA_FILE_NAMES if not name.startswith("config/") and name != "secrets/root_ca_key")
         ca, password_file, _files = self.build(tmp_path, names=names)
 
-        result = run_module(ca, password_file, pki=True, extra_env=stub_step_binary(tmp_path))
+        result = run_initialize(ca, password_file, pki=True, extra_env=stub_step_binary(tmp_path))
 
         assert result["failed"] is True
         assert "root_ca_key" in result["msg"]
 
-    def test_a_pki_only_directory_is_still_partial_without_the_flag(self, tmp_path):
+    def test_a_pki_only_directory_is_still_partial_without_the_flag(self, tmp_path, run_initialize):
         names = tuple(name for name in CA_FILE_NAMES if not name.startswith("config/"))
         ca, password_file, _files = self.build(tmp_path, names=names)
 
-        result = run_module(ca, password_file, extra_env=stub_step_binary(tmp_path))
+        result = run_initialize(ca, password_file, extra_env=stub_step_binary(tmp_path))
 
         # The message, not just `failed`: with the guard gone the module reaches
         # the stubbed step, which fails too, so asserting the flag alone passes
@@ -725,11 +739,11 @@ class TestAlreadyInitialized:
         assert "not a working CA" in result["msg"]
 
     @pytest.mark.parametrize("count", [1, 3], ids=["one-file", "no-key-material"])
-    def test_a_directory_that_is_not_yet_a_ca_is_refused(self, tmp_path, count):
+    def test_a_directory_that_is_not_yet_a_ca_is_refused(self, tmp_path, count, run_initialize):
         # Ambiguous: initializing over it could destroy half a PKI.
         ca, password_file, files = self.build(tmp_path, names=CA_FILE_NAMES[:count])
 
-        result = run_module(ca, password_file, extra_env=stub_step_binary(tmp_path))
+        result = run_initialize(ca, password_file, extra_env=stub_step_binary(tmp_path))
 
         assert result["failed"] is True
         assert "not a working CA" in result["msg"]
@@ -739,20 +753,20 @@ class TestAlreadyInitialized:
         "missing",
         ["certs/root_ca.crt", "certs/intermediate_ca.crt", "secrets/intermediate_ca_key"],
     )
-    def test_a_ca_missing_a_file_its_own_config_names_is_refused(self, tmp_path, missing):
+    def test_a_ca_missing_a_file_its_own_config_names_is_refused(self, tmp_path, missing, run_initialize):
         # The half-built case the old filename list was there to catch, now
         # caught from the CA's own account of what it needs.
         names = tuple(name for name in CA_FILE_NAMES if name != missing)
         ca, password_file, _files = self.build(tmp_path, names=names)
 
-        result = run_module(ca, password_file, extra_env=stub_step_binary(tmp_path))
+        result = run_initialize(ca, password_file, extra_env=stub_step_binary(tmp_path))
 
         assert result["failed"] is True
         assert "not a working CA" in result["msg"]
         # Named, not just counted: an operator has to know which file to restore.
         assert os.path.basename(missing) in result["msg"]
 
-    def test_a_ca_whose_root_key_is_kept_offline_is_complete(self, tmp_path):
+    def test_a_ca_whose_root_key_is_kept_offline_is_complete(self, tmp_path, run_initialize):
         # Best practice, and what the filename list got wrong. step-ca signs
         # with the intermediate key; the root key is only needed to issue a new
         # intermediate, so it belongs offline. ca.json never names it, and the
@@ -760,12 +774,12 @@ class TestAlreadyInitialized:
         names = tuple(name for name in CA_FILE_NAMES if name != "secrets/root_ca_key")
         ca, password_file, _files = self.build(tmp_path, names=names)
 
-        result = run_module(ca, password_file, extra_env=stub_step_binary(tmp_path))
+        result = run_initialize(ca, password_file, extra_env=stub_step_binary(tmp_path))
 
         assert result["changed"] is False
         assert "already initialized" in result["msg"]
 
-    def test_a_ca_without_defaults_json_is_complete(self, tmp_path):
+    def test_a_ca_without_defaults_json_is_complete(self, tmp_path, run_initialize):
         # defaults.json holds client defaults for the step CLI. step-ca is
         # started with ca.json and never reads it, so its absence is not a
         # broken CA - and the old rule's remedy, force, would have deleted a
@@ -773,11 +787,11 @@ class TestAlreadyInitialized:
         names = tuple(name for name in CA_FILE_NAMES if name != "config/defaults.json")
         ca, password_file, _files = self.build(tmp_path, names=names)
 
-        result = run_module(ca, password_file, extra_env=stub_step_binary(tmp_path))
+        result = run_initialize(ca, password_file, extra_env=stub_step_binary(tmp_path))
 
         assert result["changed"] is False
 
-    def test_a_registration_authority_is_complete(self, tmp_path):
+    def test_a_registration_authority_is_complete(self, tmp_path, run_initialize):
         # An RA proxies signing to an upstream CA and holds no local key
         # material, so it has two of the six files a standalone CA has. Under
         # the old rule it failed on every re-run - the half of #36 that this
@@ -797,12 +811,12 @@ class TestAlreadyInitialized:
             encoding="utf-8",
         )
 
-        result = run_module(ca, password_file, extra_env=stub_step_binary(tmp_path))
+        result = run_initialize(ca, password_file, extra_env=stub_step_binary(tmp_path))
 
         assert result["changed"] is False
         assert result["management_mode"] == "config"
 
-    def test_an_ssh_ca_missing_its_host_key_is_refused(self, tmp_path):
+    def test_an_ssh_ca_missing_its_host_key_is_refused(self, tmp_path, run_initialize):
         # `--ssh` adds key material the filename list could not see at all, so
         # an SSH CA missing its host key used to read as complete.
         ca, password_file, _files = self.build(tmp_path)
@@ -811,24 +825,24 @@ class TestAlreadyInitialized:
         (ca / "config" / "ca.json").write_text(json.dumps(config), encoding="utf-8")
         (ca / "secrets" / "ssh_user_ca_key").write_text("material", encoding="utf-8")
 
-        result = run_module(ca, password_file, extra_env=stub_step_binary(tmp_path))
+        result = run_initialize(ca, password_file, extra_env=stub_step_binary(tmp_path))
 
         assert result["failed"] is True
         assert "ssh_host_ca_key" in result["msg"]
         assert "ssh_user_ca_key" not in result["msg"]
 
-    def test_a_file_named_by_the_config_but_empty_is_refused(self, tmp_path):
+    def test_a_file_named_by_the_config_but_empty_is_refused(self, tmp_path, run_initialize):
         # Present is not usable. A zero-byte root certificate does not start a
         # CA, and os.path.exists alone would wave it through.
         ca, password_file, _files = self.build(tmp_path)
         (ca / "certs" / "root_ca.crt").write_text("", encoding="utf-8")
 
-        result = run_module(ca, password_file, extra_env=stub_step_binary(tmp_path))
+        result = run_initialize(ca, password_file, extra_env=stub_step_binary(tmp_path))
 
         assert result["failed"] is True
         assert "root_ca.crt" in result["msg"]
 
-    def test_an_absolute_path_in_the_config_is_honoured(self, tmp_path):
+    def test_an_absolute_path_in_the_config_is_honoured(self, tmp_path, run_initialize):
         # step writes absolute paths by default; the relative form only shows
         # up because the unit runs with WorkingDirectory set to the CA.
         elsewhere = tmp_path / "vault"
@@ -840,26 +854,30 @@ class TestAlreadyInitialized:
         config["root"] = str(elsewhere / "root.crt")
         (ca / "config" / "ca.json").write_text(json.dumps(config), encoding="utf-8")
 
-        result = run_module(ca, password_file, extra_env=stub_step_binary(tmp_path))
+        result = run_initialize(ca, password_file, extra_env=stub_step_binary(tmp_path))
 
         assert result["changed"] is False
 
-    def test_the_refusal_says_what_force_would_destroy(self, tmp_path):
+    def test_the_refusal_says_what_force_would_destroy(self, tmp_path, run_initialize):
         # It is the way out the message itself offers, and it deletes the root
         # key: unrecoverable, and it invalidates every certificate ever issued.
         ca, password_file, _files = self.build(tmp_path, names=CA_FILE_NAMES[:3])
 
-        result = run_module(ca, password_file, extra_env=stub_step_binary(tmp_path))
+        result = run_initialize(ca, password_file, extra_env=stub_step_binary(tmp_path))
 
         assert "root key" in result["msg"]
         assert "cannot be recovered" in result["msg"]
 
-    def test_force_still_reinitializes_a_complete_ca(self, tmp_path):
+    def test_force_still_reinitializes_a_complete_ca(self, tmp_path, run_initialize):
         # The escape hatch has to keep working now that the no-force path no
         # longer fails.
         ca, password_file, files = self.build(tmp_path)
 
-        result = run_module(ca, password_file, force=True, extra_env=stub_step_binary(tmp_path))
+        result = run_initialize(ca, password_file, force=True, extra_env=stub_step_binary(tmp_path))
 
-        assert result["failed"] is True  # the stubbed step fails after deletion
+        # The marker is what makes "the stubbed step" true rather than assumed:
+        # this is the only other test that reaches step at all, so without it
+        # the failure could equally be the real binary's.
+        assert result["failed"] is True
+        assert STEP_STUB_MARKER in result["msg"]
         assert [path for path in files if path.exists()] == []

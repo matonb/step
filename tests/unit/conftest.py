@@ -15,10 +15,20 @@ matters: a predictable path under ``/tmp`` can be pre-created by anything else
 on the host, and this code adds it to ``sys.path``, so tests would import and
 execute whatever is there. It also keeps two checkouts from repointing each
 other's link.
+
+It also provides the ``run_module`` fixture, which executes a module as its own
+process the way Ansible does. That belongs here rather than in a test module
+because it depends on the ``sys.path`` entry arranged above, and because both
+module test files need it.
 """
 
+import json
+import os
 import pathlib
+import subprocess
 import sys
+
+import pytest
 
 COLLECTION = ("matonb", "step")
 CACHE_DIR = ".pytest-collection-root"
@@ -67,3 +77,50 @@ def _ensure_collection_importable() -> None:
 
 
 _ensure_collection_importable()
+
+
+@pytest.fixture
+def run_module():
+    """Execute a module as its own process, the way Ansible invokes one.
+
+    Ansible runs a module as a subprocess with ``ANSIBLE_MODULE_ARGS`` on stdin.
+    Driving it that way rather than calling the functions inside it is what pins
+    the behaviour that lives in ``main()`` - the part no test of the individual
+    functions can reach.
+
+    The child inherits this process's environment but *not* its ``sys.path``,
+    which is where ``_ensure_collection_importable`` made the collection
+    resolvable, so ``PYTHONPATH`` is handed over explicitly rather than
+    recomputed. Only entries that actually carry an ``ansible_collections``
+    directory are passed: exporting the whole path would also export pytest's
+    insertion of the test's own directory, letting it shadow stdlib imports in
+    the child. ``ansible`` itself comes from the interpreter's own
+    site-packages.
+
+    Returns:
+        callable: ``(module, params, extra_env=None) -> dict``, the module's
+            parsed result. ``params`` becomes ``ANSIBLE_MODULE_ARGS``, and
+            ``extra_env`` is merged into the child's environment last, for a
+            test that needs to stub a binary onto ``PATH``.
+    """
+
+    def _run(module, params, extra_env=None):
+        args = json.dumps({"ANSIBLE_MODULE_ARGS": params})
+        collection_paths = [
+            path for path in sys.path if path and os.path.isdir(os.path.join(path, "ansible_collections"))
+        ]
+        completed = subprocess.run(
+            [sys.executable, module.__file__],
+            input=args,
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**os.environ, "PYTHONPATH": os.pathsep.join(collection_paths), **(extra_env or {})},
+        )
+        if not completed.stdout:
+            # Without this the failure surfaces as a JSONDecodeError and the real
+            # traceback, which is on stderr, is thrown away.
+            raise AssertionError(f"module produced no result (exit {completed.returncode}):\n{completed.stderr}")
+        return json.loads(completed.stdout)
+
+    return _run

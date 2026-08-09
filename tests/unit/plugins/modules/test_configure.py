@@ -11,8 +11,6 @@ import json
 import os
 import pathlib
 import stat
-import subprocess
-import sys
 
 import pytest
 
@@ -158,35 +156,25 @@ class TestUpdates:
         assert updated["authority"]["claims"] == {"minTLSCertDuration": "5m"}
 
 
-def run_module(json_path, **requested):
-    """Execute the module the way Ansible does and return its result.
+@pytest.fixture
+def run_configure(run_module):
+    """Run the configure module against a ca.json and return its result.
 
     Driving main() rather than apply_updates is what pins the reported
     `changed` value: the original defect was in main() alone, and every
     apply_updates test would have passed with it still in place.
 
-    The child inherits the environment but not this process's sys.path, which
-    is where conftest made `ansible_collections.matonb.step` importable, so it
-    is handed over rather than recomputed. Only the entries that actually carry
-    collections are passed: exporting the whole path would also export pytest's
-    insertion of this test's own directory, letting it shadow stdlib imports in
-    the child. `ansible` itself comes from the interpreter's own site-packages.
+    Environment handling - the PYTHONPATH filter and why the child needs it -
+    lives in the `run_module` fixture in tests/unit/conftest.py.
+
+    Returns:
+        callable: (json_path, **requested) -> dict, the module's parsed result.
     """
-    args = json.dumps({"ANSIBLE_MODULE_ARGS": {"json_path": str(json_path), **requested}})
-    collection_paths = [path for path in sys.path if path and os.path.isdir(os.path.join(path, "ansible_collections"))]
-    completed = subprocess.run(
-        [sys.executable, configure.__file__],
-        input=args,
-        capture_output=True,
-        text=True,
-        check=False,
-        env={**os.environ, "PYTHONPATH": os.pathsep.join(collection_paths)},
-    )
-    if not completed.stdout:
-        # Without this the failure surfaces as a JSONDecodeError and the real
-        # traceback, which is on stderr, is thrown away.
-        raise AssertionError(f"module produced no result (exit {completed.returncode}):\n{completed.stderr}")
-    return json.loads(completed.stdout)
+
+    def _run(json_path, **requested):
+        return run_module(configure, {"json_path": str(json_path), **requested})
+
+    return _run
 
 
 def existing_config(tmp_path, claims=None, **contents):
@@ -211,12 +199,12 @@ class TestReportedChangedState:
     restart on every single run.
     """
 
-    def test_first_run_changes_the_file_and_the_second_does_not(self, tmp_path):
+    def test_first_run_changes_the_file_and_the_second_does_not(self, tmp_path, run_configure):
         config_file = tmp_path / "ca.json"
         config_file.write_text(json.dumps({"address": ":443"}), encoding="utf-8")
 
-        first = run_module(config_file, max_tls_cert_duration="8760h")
-        second = run_module(config_file, max_tls_cert_duration="8760h")
+        first = run_configure(config_file, max_tls_cert_duration="8760h")
+        second = run_configure(config_file, max_tls_cert_duration="8760h")
 
         assert first["changed"] is True
         assert second["changed"] is False
@@ -225,42 +213,42 @@ class TestReportedChangedState:
             "authority": {"claims": {"maxTLSCertDuration": "8760h"}},
         }
 
-    def test_a_no_op_run_leaves_the_file_byte_for_byte_alone(self, tmp_path):
+    def test_a_no_op_run_leaves_the_file_byte_for_byte_alone(self, tmp_path, run_configure):
         # Not just "changed is false" - the file must not be rewritten at all,
         # or anything watching its mtime sees churn.
         config_file = existing_config(tmp_path, claims={"maxTLSCertDuration": "8760h"})
         before = config_file.read_bytes()
         mtime = config_file.stat().st_mtime_ns
 
-        assert run_module(config_file, max_tls_cert_duration="8760h")["changed"] is False
+        assert run_configure(config_file, max_tls_cert_duration="8760h")["changed"] is False
         assert config_file.read_bytes() == before
         assert config_file.stat().st_mtime_ns == mtime
 
-    def test_a_changed_setting_is_reported_and_written(self, tmp_path):
+    def test_a_changed_setting_is_reported_and_written(self, tmp_path, run_configure):
         config_file = existing_config(tmp_path, claims={"maxTLSCertDuration": "8760h"})
 
-        result = run_module(config_file, max_tls_cert_duration="17520h")
+        result = run_configure(config_file, max_tls_cert_duration="17520h")
 
         assert result["changed"] is True
         assert result["new_data"]["authority"]["claims"]["maxTLSCertDuration"] == "17520h"
 
-    def test_check_mode_predicts_without_writing(self, tmp_path):
+    def test_check_mode_predicts_without_writing(self, tmp_path, run_configure):
         config_file = tmp_path / "ca.json"
         config_file.write_text(json.dumps({"address": ":443"}), encoding="utf-8")
 
-        result = run_module(config_file, max_tls_cert_duration="8760h", _ansible_check_mode=True)
+        result = run_configure(config_file, max_tls_cert_duration="8760h", _ansible_check_mode=True)
 
         assert result["changed"] is True
         assert json.loads(config_file.read_text(encoding="utf-8")) == {"address": ":443"}
 
-    def test_check_mode_reports_no_change_when_already_correct(self, tmp_path):
+    def test_check_mode_reports_no_change_when_already_correct(self, tmp_path, run_configure):
         config_file = existing_config(tmp_path, claims={"maxTLSCertDuration": "8760h"})
 
-        result = run_module(config_file, max_tls_cert_duration="8760h", _ansible_check_mode=True)
+        result = run_configure(config_file, max_tls_cert_duration="8760h", _ansible_check_mode=True)
 
         assert result["changed"] is False
 
-    def test_a_renormalized_file_is_left_alone_end_to_end(self, tmp_path):
+    def test_a_renormalized_file_is_left_alone_end_to_end(self, tmp_path, run_configure):
         # The realistic case: this module wrote 8760h, then step rewrote ca.json
         # while adding a provisioner and normalized it to 8760h0m0s. Re-running
         # the same play must not report changed.
@@ -271,16 +259,16 @@ class TestReportedChangedState:
         )
         before = config_file.read_bytes()
 
-        result = run_module(config_file, max_tls_cert_duration="8760h")
+        result = run_configure(config_file, max_tls_cert_duration="8760h")
 
         assert result["changed"] is False
         assert config_file.read_bytes() == before
 
-    def test_every_exit_carries_a_message(self, tmp_path):
+    def test_every_exit_carries_a_message(self, tmp_path, run_configure):
         config_file = existing_config(tmp_path)
-        changed = run_module(config_file, max_tls_cert_duration="8760h")
-        unchanged = run_module(config_file, max_tls_cert_duration="8760h")
-        predicted = run_module(config_file, max_tls_cert_duration="17520h", _ansible_check_mode=True)
+        changed = run_configure(config_file, max_tls_cert_duration="8760h")
+        unchanged = run_configure(config_file, max_tls_cert_duration="8760h")
+        predicted = run_configure(config_file, max_tls_cert_duration="17520h", _ansible_check_mode=True)
 
         assert changed["msg"] == "JSON file updated"
         assert unchanged["msg"] == "Configuration already up to date"
@@ -288,41 +276,41 @@ class TestReportedChangedState:
 
 
 class TestFailures:
-    def test_a_malformed_ca_json_fails_with_an_explanation(self, tmp_path):
+    def test_a_malformed_ca_json_fails_with_an_explanation(self, tmp_path, run_configure):
         config_file = tmp_path / "ca.json"
         config_file.write_text("{ not json", encoding="utf-8")
 
-        result = run_module(config_file, max_tls_cert_duration="8760h")
+        result = run_configure(config_file, max_tls_cert_duration="8760h")
 
         assert result["failed"] is True
         assert "Failed to load JSON file" in result["msg"]
 
     @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
-    def test_an_unwritable_path_fails_with_an_explanation(self, tmp_path):
+    def test_an_unwritable_path_fails_with_an_explanation(self, tmp_path, run_configure):
         unwritable = tmp_path / "readonly"
         unwritable.mkdir()
         unwritable.chmod(0o500)
         try:
-            result = run_module(unwritable / "ca.json", max_tls_cert_duration="8760h", create=True)
+            result = run_configure(unwritable / "ca.json", max_tls_cert_duration="8760h", create=True)
         finally:
             unwritable.chmod(0o700)
 
         assert result["failed"] is True
         assert "Failed to write JSON file" in result["msg"]
 
-    def test_an_invalid_duration_names_the_option(self, tmp_path):
-        result = run_module(existing_config(tmp_path), max_tls_cert_duration="forever")
+    def test_an_invalid_duration_names_the_option(self, tmp_path, run_configure):
+        result = run_configure(existing_config(tmp_path), max_tls_cert_duration="forever")
 
         assert result["failed"] is True
         assert "max_tls_cert_duration" in result["msg"]
 
-    def test_a_file_that_is_not_a_json_object_is_refused(self, tmp_path):
+    def test_a_file_that_is_not_a_json_object_is_refused(self, tmp_path, run_configure):
         # Reaches .update() otherwise, and surfaces as an AttributeError
         # traceback rather than something an operator can act on.
         config_file = tmp_path / "ca.json"
         config_file.write_text('["an", "array"]', encoding="utf-8")
 
-        result = run_module(config_file, max_tls_cert_duration="8760h")
+        result = run_configure(config_file, max_tls_cert_duration="8760h")
 
         assert result["failed"] is True
         assert "does not hold a JSON object" in result["msg"]
@@ -336,82 +324,82 @@ class TestMissingFile:
     configure was never touched (#37).
     """
 
-    def test_a_missing_file_fails_and_creates_nothing(self, tmp_path):
+    def test_a_missing_file_fails_and_creates_nothing(self, tmp_path, run_configure):
         config_file = tmp_path / "ca.json"
 
-        result = run_module(config_file, max_tls_cert_duration="8760h")
+        result = run_configure(config_file, max_tls_cert_duration="8760h")
 
         assert result["failed"] is True
         assert "does not exist" in result["msg"]
         assert "create" in result["msg"]
         assert not config_file.exists()
 
-    def test_a_missing_file_with_nothing_requested_still_fails(self, tmp_path):
+    def test_a_missing_file_with_nothing_requested_still_fails(self, tmp_path, run_configure):
         # The mistyped-path case is usually noticed on a run that changes
         # nothing, so this must not quietly report ok either.
         config_file = tmp_path / "ca.json"
 
-        assert run_module(config_file)["failed"] is True
+        assert run_configure(config_file)["failed"] is True
         assert not config_file.exists()
 
-    def test_create_writes_a_new_file(self, tmp_path):
+    def test_create_writes_a_new_file(self, tmp_path, run_configure):
         config_file = tmp_path / "ca.json"
 
-        result = run_module(config_file, max_tls_cert_duration="8760h", create=True)
+        result = run_configure(config_file, max_tls_cert_duration="8760h", create=True)
 
         assert result["changed"] is True
         assert json.loads(config_file.read_text(encoding="utf-8")) == {
             "authority": {"claims": {"maxTLSCertDuration": "8760h"}}
         }
 
-    def test_create_writes_nothing_in_check_mode(self, tmp_path):
+    def test_create_writes_nothing_in_check_mode(self, tmp_path, run_configure):
         config_file = tmp_path / "ca.json"
 
-        result = run_module(config_file, max_tls_cert_duration="8760h", create=True, _ansible_check_mode=True)
+        result = run_configure(config_file, max_tls_cert_duration="8760h", create=True, _ansible_check_mode=True)
 
         assert result["changed"] is True
         assert not config_file.exists()
 
 
 class TestBackup:
-    def test_no_backup_is_taken_by_default(self, tmp_path):
+    def test_no_backup_is_taken_by_default(self, tmp_path, run_configure):
         config_file = existing_config(tmp_path)
 
-        result = run_module(config_file, max_tls_cert_duration="8760h")
+        result = run_configure(config_file, max_tls_cert_duration="8760h")
 
         assert "backup_file" not in result
         assert [path.name for path in tmp_path.iterdir()] == ["ca.json"]
 
-    def test_backup_preserves_the_previous_contents(self, tmp_path):
+    def test_backup_preserves_the_previous_contents(self, tmp_path, run_configure):
         config_file = existing_config(tmp_path, claims={"maxTLSCertDuration": "8760h"})
         before = config_file.read_text(encoding="utf-8")
 
-        result = run_module(config_file, max_tls_cert_duration="17520h", backup=True)
+        result = run_configure(config_file, max_tls_cert_duration="17520h", backup=True)
 
         assert pathlib.Path(result["backup_file"]).read_text(encoding="utf-8") == before
         assert "17520h" in config_file.read_text(encoding="utf-8")
 
-    def test_no_backup_when_nothing_changes(self, tmp_path):
+    def test_no_backup_when_nothing_changes(self, tmp_path, run_configure):
         # A backup per run would litter the CA directory with copies of a file
         # that never changed.
         config_file = existing_config(tmp_path, claims={"maxTLSCertDuration": "8760h"})
 
-        result = run_module(config_file, max_tls_cert_duration="8760h", backup=True)
+        result = run_configure(config_file, max_tls_cert_duration="8760h", backup=True)
 
         assert result["changed"] is False
         assert "backup_file" not in result
         assert [path.name for path in tmp_path.iterdir()] == ["ca.json"]
 
-    def test_no_backup_in_check_mode(self, tmp_path):
+    def test_no_backup_in_check_mode(self, tmp_path, run_configure):
         config_file = existing_config(tmp_path)
 
-        run_module(config_file, max_tls_cert_duration="8760h", backup=True, _ansible_check_mode=True)
+        run_configure(config_file, max_tls_cert_duration="8760h", backup=True, _ansible_check_mode=True)
 
         assert [path.name for path in tmp_path.iterdir()] == ["ca.json"]
 
 
 class TestPathHandling:
-    def test_a_tilde_in_json_path_is_expanded(self, tmp_path, monkeypatch):
+    def test_a_tilde_in_json_path_is_expanded(self, tmp_path, monkeypatch, run_configure):
         # json_path used to be type: str, so `~` stayed literal while ca_path
         # and ca_config beside it expanded - and the missing file was then
         # created, producing a directory named `~`.
@@ -420,7 +408,7 @@ class TestPathHandling:
         expanded = tmp_path / "step" / "ca.json"
         expanded.write_text("{}", encoding="utf-8")
 
-        result = run_module("~/step/ca.json", max_tls_cert_duration="8760h")
+        result = run_configure("~/step/ca.json", max_tls_cert_duration="8760h")
 
         assert result["changed"] is True
         assert "8760h" in expanded.read_text(encoding="utf-8")
@@ -436,14 +424,14 @@ class TestFilePreservation:
     out of its own configuration.
     """
 
-    def test_the_existing_mode_survives_the_write(self, tmp_path):
+    def test_the_existing_mode_survives_the_write(self, tmp_path, run_configure):
         config_file = existing_config(tmp_path)
         config_file.chmod(0o640)
 
-        assert run_module(config_file, max_tls_cert_duration="8760h")["changed"] is True
+        assert run_configure(config_file, max_tls_cert_duration="8760h")["changed"] is True
         assert stat.S_IMODE(config_file.stat().st_mode) == 0o640
 
-    def test_a_symlink_is_followed_not_replaced(self, tmp_path):
+    def test_a_symlink_is_followed_not_replaced(self, tmp_path, run_configure):
         # Replacing the link would leave the file it named holding stale
         # configuration while the CA carried on reading it.
         real = tmp_path / "real-ca.json"
@@ -451,26 +439,26 @@ class TestFilePreservation:
         link = tmp_path / "ca.json"
         link.symlink_to(real)
 
-        assert run_module(link, max_tls_cert_duration="8760h")["changed"] is True
+        assert run_configure(link, max_tls_cert_duration="8760h")["changed"] is True
 
         assert link.is_symlink()
         assert "8760h" in real.read_text(encoding="utf-8")
 
-    def test_no_temporary_file_is_left_beside_the_target(self, tmp_path):
+    def test_no_temporary_file_is_left_beside_the_target(self, tmp_path, run_configure):
         config_file = existing_config(tmp_path)
-        run_module(config_file, max_tls_cert_duration="8760h")
+        run_configure(config_file, max_tls_cert_duration="8760h")
         assert sorted(path.name for path in tmp_path.iterdir()) == ["ca.json"]
 
 
 class TestMalformedAuthority:
     @pytest.mark.parametrize("authority", ["null", '"text"', "3", "[]"], ids=["null", "string", "int", "array"])
-    def test_an_authority_that_is_not_an_object_is_refused(self, tmp_path, authority):
+    def test_an_authority_that_is_not_an_object_is_refused(self, tmp_path, authority, run_configure):
         # Reaches setdefault() otherwise, and surfaces as an AttributeError
         # traceback rather than something an operator can act on.
         config_file = tmp_path / "ca.json"
         config_file.write_text(f'{{"authority": {authority}}}', encoding="utf-8")
 
-        result = run_module(config_file, max_tls_cert_duration="8760h")
+        result = run_configure(config_file, max_tls_cert_duration="8760h")
 
         assert result["failed"] is True
         assert "'authority' entry" in result["msg"]
