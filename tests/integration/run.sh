@@ -37,7 +37,7 @@ cleanup() {
         docker volume inspect "$ADMIN_VOLUME" >/dev/null 2>&1 &&
             echo "WARNING: could not remove volume $ADMIN_VOLUME; remove it before re-running" >&2
     fi
-    # The config CA directory is written by the container as uid 1000. If that
+    # The config CA directory is written by the container as this user. If that
     # is not us, drop privileges through the image itself rather than failing.
     if [ -d "$WORK" ] && ! rm -rf "$WORK" 2>/dev/null; then
         docker run --rm -u 0:0 -v "$WORK:/w" "$IMAGE" rm -rf /w/config-ca >/dev/null 2>&1 || true
@@ -58,9 +58,6 @@ require docker
 require step
 require ansible-playbook
 
-# The container writes as uid 1000 into the bind-mounted config CA directory,
-# and this script reads and greps those files.
-[ "$(id -u)" -eq 1000 ] || die "this suite needs to run as uid 1000 to share the bind-mounted CA directory (found $(id -u))"
 
 # A container left behind by a SIGKILLed run would make `docker run --name`
 # fail outright.
@@ -124,14 +121,21 @@ wait_for_ca "$ADMIN_URL" "$ADMIN_DIR/root_ca.crt" "admin CA" "$ADMIN_CONTAINER"
 log "Starting config-mode CA (bind-mounted ca.json) on :$CONFIG_PORT"
 ###############################################################################
 # Bind-mounting means the host-side module and the containerised CA share one
-# ca.json, so `restart_required` can be observed rather than assumed. The image
-# runs as uid/gid 1000, which matches a typical developer account.
+# ca.json, so `restart_required` can be observed rather than assumed.
+#
+# The CA is told to run as whoever is running this script. step-ca creates its
+# directories 0700, owned by the uid it runs as, so the host can read what it
+# writes only when the two match - and this script reads and greps those files
+# throughout. The image defaults to uid 1000, which is a typical developer
+# account and nothing else: a GitHub runner is 1001, and there the suite used
+# to refuse to start rather than run against files it could not open.
 CONFIG_DIR="$WORK/config-ca"
 mkdir -p "$CONFIG_DIR"
 # mktemp -d gives 0700; the container must be able to traverse into it.
 chmod 711 "$WORK"
 
 docker run -d --name "$CONFIG_CONTAINER" \
+    --user "$(id -u):$(id -g)" \
     -p "$CONFIG_PORT:9000" \
     -v "$CONFIG_DIR:/home/step" \
     -e "DOCKER_STEPCA_INIT_NAME=Integration Config CA" \
