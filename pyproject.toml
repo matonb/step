@@ -15,8 +15,14 @@ dev = [
     "pre-commit>=4.2.0",
     "ruff>=0.12.4",
     "yamllint>=1.35.0",
+    # ansible-core is deliberately absent: it arrives transitively through
+    # ansible-lint, and a bound here would be a second number free to drift out
+    # of step with requires_ansible in meta/runtime.yml, which is where the
+    # supported floor is declared. Nor would a bound here hold that floor in
+    # practice - current ansible-lint requires ansible-core >= 2.16, above the
+    # 2.14 the collection supports. Testing at the floor means installing
+    # ansible-core directly, which is what .github/workflows/test.yml does.
     "ansible-lint>=24.12.0",
-    "ansible-core>=2.15.0",
 ]
 
 [tool.ruff]

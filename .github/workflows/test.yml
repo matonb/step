@@ -70,6 +70,12 @@ jobs:
     # floor per release (2.14 needs >=3.9, 2.20 needs >=3.12), so the two move
     # together or the leg will not install.
     #
+    # Within what 2.14 allows, the older leg pins 3.9 rather than 3.11 because
+    # 3.9 is this collection's own floor - what the PEP 585 annotations in the
+    # modules require, and what RHEL 9 and Debian 11 ship as system Python.
+    # Running it at 3.11 would leave the floor stated in README.md and never
+    # executed.
+    #
     # fail-fast off because "does it still work on the floor" and "does it work
     # on the pin" are separate questions, and the answer to one should not
     # cancel the other.
@@ -78,7 +84,7 @@ jobs:
       matrix:
         include:
           - ansible-core: "2.14.18"
-            python: "3.11"
+            python: "3.9"
           - ansible-core: "2.20.5"
             python: "3.13"
 
