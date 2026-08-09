@@ -17,6 +17,20 @@ RUN dnf -y install --setopt=install_weak_deps=False \
         systemd \
     && dnf clean all
 
+# The image ships /etc/shadow at mode 0000 - root reads it anyway, via
+# CAP_DAC_OVERRIDE through PAM's unix_chkpwd helper. On a Docker host running
+# Ubuntu 24.04 (this suite's own CI runner included), an AppArmor profile
+# scoped to EL9's unix_chkpwd denies it that capability, and every become
+# fails with "PAM account management error: Authentication service cannot
+# retrieve authentication info" the moment anything does become_user. Giving
+# root an explicit read bit means PAM never needs the capability at all.
+# Reproduced identically on rockylinux and almalinux; EL10 builds of both
+# were unaffected despite shipping the same 0000 permission, so this is
+# pinned to what el9's unix_chkpwd trips rather than the mode itself.
+# Upstream: https://github.com/rocky-linux/sig-cloud-instance-images/issues/56
+# #50.
+RUN chmod 0400 /etc/shadow
+
 STOPSIGNAL SIGRTMIN+3
 
 CMD ["/usr/sbin/init"]
