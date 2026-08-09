@@ -22,6 +22,12 @@ including against a CA that is not running.
 
 - ansible-core 2.14 or higher — the roles use `ansible.builtin.systemd_service`,
   which does not exist before it
+- Python 3.9 or higher **on the managed node**, where the modules actually run —
+  they annotate with PEP 585 builtin generics in positions evaluated at import,
+  so an older interpreter raises `TypeError` before a task does any work. This
+  is separate from the line above: `requires_ansible` constrains the controller
+  only. 3.9 is what RHEL/Rocky 9 and Debian 11 ship as their system Python, and
+  current ansible-core's own lowest supported managed node
 - `community.general`, for the `capabilities` module the `ca_server` role uses
 - A Debian- or RedHat-family target, for the roles. The modules work anywhere
   step-ca does
