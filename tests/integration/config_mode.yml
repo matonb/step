@@ -17,7 +17,12 @@
     ca_dir: "{{ lookup('env', 'STEP_TEST_CONFIG_DIR') }}"
     ca_url: "{{ lookup('env', 'STEP_TEST_CONFIG_URL') }}"
     container: "{{ lookup('env', 'STEP_TEST_CONFIG_CONTAINER') }}"
-    connection_options:
+    # Anchored rather than splatted with `args: "{{ ... }}"`: a templated arg
+    # splat makes ansible-core warn on every task that uses it. New tasks merge
+    # `<<: *conn` - nothing reads connection_options as a var any more, and
+    # going back to the splat idiom brings the warning back. Anchors resolve
+    # within one YAML document, so tasks using it have to stay in this file.
+    connection_options: &conn
       # ca_config must be explicit here. The CA writes container-absolute paths
       # into config/defaults.json ("ca-config": "/home/step/config/ca.json"),
       # and the step CLI loads that file as its flag defaults, so without this
@@ -30,9 +35,9 @@
   tasks:
     - name: Add an ACME provisioner (check mode)
       matonb.step.provisioner:
+        <<: *conn
         name: acme
         type: ACME
-      args: "{{ connection_options }}"
       check_mode: true
       register: acme_check
 
@@ -44,9 +49,9 @@
 
     - name: Add an ACME provisioner
       matonb.step.provisioner:
+        <<: *conn
         name: acme
         type: ACME
-      args: "{{ connection_options }}"
       register: acme_add
 
     - name: Assert the mode, the change, and that a restart IS demanded
@@ -65,9 +70,9 @@
     # "provisioner with name acme already exists" - failing this task.
     - name: Re-add immediately, without reloading the CA
       matonb.step.provisioner:
+        <<: *conn
         name: acme
         type: ACME
-      args: "{{ connection_options }}"
       register: acme_again
 
     - name: The provisioner landed in ca.json, not the database
@@ -95,26 +100,26 @@
 
     - name: Add a JWK provisioner with a claim
       matonb.step.provisioner:
+        <<: *conn
         name: cicd
         type: JWK
         x509_min: 20m
-      args: "{{ connection_options }}"
       register: jwk_add
 
     - name: Re-run with the same claim, still without a reload
       matonb.step.provisioner:
+        <<: *conn
         name: cicd
         type: JWK
         x509_min: 20m
-      args: "{{ connection_options }}"
       register: jwk_again
 
     - name: Change the claim, still without a reload
       matonb.step.provisioner:
+        <<: *conn
         name: cicd
         type: JWK
         x509_min: 45m
-      args: "{{ connection_options }}"
       register: drift
 
     - name: Assert the generated password, idempotence and reconciliation
@@ -132,9 +137,9 @@
     # leaves the provisioner in ca.json.
     - name: Remove the ACME provisioner, still without a reload
       matonb.step.provisioner:
+        <<: *conn
         name: acme
         state: absent
-      args: "{{ connection_options }}"
       register: acme_remove
 
     - name: Assert removal happened and demands a restart too
@@ -183,16 +188,16 @@
 
     - name: Add a provisioner with no CA running at all
       matonb.step.provisioner:
+        <<: *conn
         name: offline
         type: ACME
-      args: "{{ connection_options }}"
       register: offline_add
 
     - name: Re-run with the CA still down
       matonb.step.provisioner:
+        <<: *conn
         name: offline
         type: ACME
-      args: "{{ connection_options }}"
       register: offline_again
 
     - name: Assert the change landed and is still idempotent
