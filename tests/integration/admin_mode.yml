@@ -9,7 +9,12 @@
   vars:
     ca_dir: "{{ lookup('env', 'STEP_TEST_ADMIN_DIR') }}"
     ca_url: "{{ lookup('env', 'STEP_TEST_ADMIN_URL') }}"
-    connection_options:
+    # Anchored rather than splatted with `args: "{{ ... }}"`: a templated arg
+    # splat makes ansible-core warn on every task that uses it. New tasks merge
+    # `<<: *conn` - nothing reads connection_options as a var any more, and
+    # going back to the splat idiom brings the warning back. Anchors resolve
+    # within one YAML document, so tasks using it have to stay in this file.
+    connection_options: &conn
       admin_password_file: "{{ ca_dir }}/pass"
       admin_provisioner: admin
       admin_subject: step
@@ -43,24 +48,24 @@
 
     - name: Add an ACME provisioner (check mode)
       matonb.step.provisioner:
+        <<: *conn
         name: acme
         type: ACME
-      args: "{{ connection_options }}"
       check_mode: true
       register: acme_check
 
     - name: Add an ACME provisioner
       matonb.step.provisioner:
+        <<: *conn
         name: acme
         type: ACME
-      args: "{{ connection_options }}"
       register: acme_add
 
     - name: Add it again
       matonb.step.provisioner:
+        <<: *conn
         name: acme
         type: ACME
-      args: "{{ connection_options }}"
       register: acme_again
 
     - name: Assert the mode, the change, and that no restart is demanded
@@ -75,22 +80,22 @@
 
     - name: Add a JWK provisioner with claims
       matonb.step.provisioner:
+        <<: *conn
         name: cicd
         type: JWK
         x509_default: 36h
         x509_max: 72h
         x509_min: 20m
-      args: "{{ connection_options }}"
       register: jwk_add
 
     - name: Add it again
       matonb.step.provisioner:
+        <<: *conn
         name: cicd
         type: JWK
         x509_default: 36h
         x509_max: 72h
         x509_min: 20m
-      args: "{{ connection_options }}"
       register: jwk_again
 
     - name: Assert a password was generated and the claims settled
@@ -143,12 +148,12 @@
 
     - name: Change a claim
       matonb.step.provisioner:
+        <<: *conn
         name: cicd
         type: JWK
         x509_default: 48h
         x509_max: 72h
         x509_min: 20m
-      args: "{{ connection_options }}"
       register: drift
 
     - name: Assert only the changed claim was reconciled
@@ -175,16 +180,16 @@
 
     - name: Remove the ACME provisioner
       matonb.step.provisioner:
+        <<: *conn
         name: acme
         state: absent
-      args: "{{ connection_options }}"
       register: acme_remove
 
     - name: Remove it again
       matonb.step.provisioner:
+        <<: *conn
         name: acme
         state: absent
-      args: "{{ connection_options }}"
       register: acme_remove_again
 
     - name: Assert removal and idempotence
