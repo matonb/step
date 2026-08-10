@@ -237,7 +237,7 @@ assert_handler_ran() {
 assert_task_ran() {
     local task=$1 outcome
     outcome="$(sed 's/\x1b\[[0-9;]*m//g' "$WORK/last.log" |
-        grep -A3 -E "TASK \[matonb\.step\.[a-z_]+ : $task\]" |
+        grep -A3 -E "TASK \[matonb\.smallstep\.[a-z_]+ : $task\]" |
         grep -m1 -oE '^(changed|ok|skipping|fatal):' || true)"
     case "$outcome" in
         changed: | ok:) ;;

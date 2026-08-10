@@ -6,7 +6,7 @@ DOCUMENTATION = r"""
 ---
 module: config_info
 short_description: Read a step-ca JSON configuration file
-version_added: "1.4.2"
+version_added: "1.0.0"
 description:
   - Reads a step-ca JSON configuration file, such as C(defaults.json), and returns its contents.
   - >-
