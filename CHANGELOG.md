@@ -2,6 +2,17 @@
 
 <!-- version list -->
 
+## v1.4.2 (2026-08-10)
+
+### Bug Fixes
+
+- **collection**: Rename to matonb.smallstep
+  ([`002aa11`](https://github.com/matonb/smallstep/commit/002aa11e784609a15c487f8cc5965daaeb56a721))
+
+- **tests**: Match the renamed collection in the role assertions
+  ([`f9d7d3e`](https://github.com/matonb/smallstep/commit/f9d7d3e0f979ff8820b059d709327cade15a5c54))
+
+
 ## v1.4.1 (2026-08-10)
 
 ### Bug Fixes
