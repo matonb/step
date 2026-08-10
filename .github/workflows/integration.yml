@@ -7,16 +7,35 @@ name: Integration
 # failures people learn to ignore are the ones that fail for reasons unrelated
 # to the change.
 #
-# So: on demand, or when a pull request opts in by carrying the `integration`
-# label. `synchronize` is listed as well as `labeled` so that pushing more
-# commits to an already-labelled PR re-runs them, rather than leaving the last
-# green result standing over code it never saw.
+# So they run on the pull requests that can actually break them: those touching
+# the modules, the roles, or the suites themselves. That replaced an opt-in
+# `integration` label, which put the decision on whoever opened the pull request
+# and so was missed exactly when it mattered. Anything outside these paths can
+# still be run by hand from the Actions tab.
 #
-# Nothing here is a merge gate. A failure is something to read.
+# Nothing here is a *merge* gate. A failure on a pull request is something to
+# read. It is a *release* gate: release.yml calls this workflow, and a failure
+# there stops the version being tagged, so nothing reaches Galaxy that these
+# suites have not run against. That does couple releasing to smallstep's CDN
+# being up, which is the price of not publishing something untested - and the
+# paths below are what keep the release run from being the first time these
+# suites see the code, which would find the problem a merge too late.
 "on":
+  workflow_call:
   workflow_dispatch:
   pull_request:
-    types: [labeled, synchronize]
+    paths:
+      - plugins/**
+      - roles/**
+      - tests/integration/**
+
+# Read-only, and stated rather than inherited. Called from release.yml these
+# jobs would otherwise take its `contents: write` - and actions/checkout leaves
+# that token in .git/config in the workspace while role.sh runs privileged
+# containers and both jobs install third-party artifacts from smallstep's apt
+# repository and from Galaxy. Neither job writes anything to this repository.
+permissions:
+  contents: read
 
 env:
   ANSIBLE_CORE_VERSION: "2.20.5"
@@ -30,10 +49,6 @@ jobs:
     # Same pin as the sanity job, so the container behaviour these exercise is
     # not also drifting with the runner image.
     runs-on: ubuntu-24.04
-    if: >-
-      github.event_name == 'workflow_dispatch'
-      || contains(github.event.pull_request.labels.*.name, 'integration')
-
     steps:
       # ansible-test is not used here, but role.sh and run.sh resolve the
       # collection as matonb.step, so the checkout still has to sit at
@@ -76,10 +91,6 @@ jobs:
   roles:
     name: Roles against real systemd
     runs-on: ubuntu-24.04
-    if: >-
-      github.event_name == 'workflow_dispatch'
-      || contains(github.event.pull_request.labels.*.name, 'integration')
-
     steps:
       - name: Checkout into a collection path
         uses: actions/checkout@v7

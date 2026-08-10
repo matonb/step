@@ -10,10 +10,92 @@ permissions:
   issues: write # optional, for semantic-release comments
   pull-requests: write # optional, for semantic-release comments
 
+# semantic-release used to run within a minute of the push. It now waits behind
+# the test and integration suites, which widens the window in which a second
+# merge can start its own run to something over ten minutes. Two runs at
+# different commits both compute the same next version and race to push the
+# tag; the loser fails on a non-fast-forward, so the result is a red run rather
+# than a bad release, but serialising avoids it entirely.
+#
+# Not cancel-in-progress: cancelling a run part-way through `semantic-release
+# version` is the one thing that can leave a tag pushed with nothing published.
+#
+# Note that this holds at most one run waiting, rather than a full queue. A
+# third merge arriving while one runs and one waits cancels the waiting run and
+# takes its place. Nothing goes untested by that - the surviving run checks out
+# a tree containing the cancelled run's commits, so its gates cover them and its
+# release includes them - but those commits get no gate result under their own
+# SHA. Use the pull request for per-commit results; this is a release gate.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  # Everything the release job does is irreversible - the version is bumped,
+  # pushed, tagged and announced. So the two things that can be known in
+  # advance are established first: that the token needed to finish the job
+  # exists, and that the suites below pass. A missing token found later would
+  # leave a version tagged and released but absent from Galaxy.
+  #
+  # Cheap, and first, so a missing secret fails in seconds rather than after the
+  # ten minutes the suites take. It establishes only that the secret is set;
+  # a revoked or wrong-scope token still gets as far as the publish.
+  preflight:
+    name: Preflight
+    # Pinned rather than latest, matching the other workflows, so nothing here
+    # changes the day the label moves.
+    runs-on: ubuntu-24.04
+
+    steps:
+      # Duplicated verbatim in publish.yml, deliberately. Deduplicating it into
+      # a local composite action would mean checking the repository out first,
+      # since that is the only way a composite action becomes usable - and this
+      # job's whole value is failing within seconds of the push, with no
+      # checkout at all. Six lines of shell is the cheaper of the two costs.
+      # If ANSIBLE_GALAXY_API_KEY is ever renamed, both copies have to move.
+      - name: Check the Galaxy token is present
+        env:
+          GALAXY_API_KEY: ${{ secrets.ANSIBLE_GALAXY_API_KEY }}
+        run: |
+          if [ -z "$GALAXY_API_KEY" ]; then
+            echo "::error::ANSIBLE_GALAXY_API_KEY is not set. Generate a" \
+                 "token at galaxy.ansible.com and add it as a repository" \
+                 "secret."
+            exit 1
+          fi
+
+  # The release gates. Both run before the release job rather than before the
+  # publish job, deliberately: gating the publish alone would let a failure
+  # leave a tag and a GitHub release for a version that never shipped, which is
+  # the state this workflow is otherwise arranged to avoid. A failure in either
+  # means nothing happened at all.
+  #
+  # Both from preflight rather than one after the other. They answer separate
+  # questions - does the code hold up, and does it work against a real step-ca -
+  # and a failure in one is not a reason to stop asking the other.
+  #
+  # Unconditional rather than only when a release is due. semantic-release can
+  # predict that, but only from a branch in a release group, so the prediction
+  # cannot be checked anywhere except on main - and a wrong one silently skips
+  # releases. The cost is these suites running on merges that release nothing.
+  test:
+    name: Test
+    needs: preflight
+    uses: ./.github/workflows/test.yml
+
+  integration:
+    name: Integration
+    needs: preflight
+    uses: ./.github/workflows/integration.yml
+
   release:
     name: Semantic Release
+    needs: [test, integration]
     runs-on: ubuntu-latest
+
+    outputs:
+      released: ${{ steps.release.outputs.released }}
+      tag: ${{ steps.release.outputs.tag }}
 
     steps:
       - name: Checkout repository
@@ -31,8 +113,39 @@ jobs:
           python -m pip install --upgrade pip
           pip install 'python-semantic-release>=10,<11'
 
+      # `semantic-release version` is a no-op when nothing since the last tag
+      # is releasable, and exits 0 either way - so exit status cannot tell the
+      # publish job whether to run. The last released tag can: it only moves
+      # when a release actually happened. Empty output is the legitimate
+      # "never released" answer, and the reads are deliberately not guarded, so
+      # a genuine failure stops the job instead of being read as either.
       - name: Run semantic-release
+        id: release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          before="$(semantic-release version --print-last-released-tag)"
           semantic-release version
+          after="$(semantic-release version --print-last-released-tag)"
+
+          if [ -n "$after" ] && [ "$before" != "$after" ]; then
+            echo "Released ${before:-none} -> ${after}"
+            echo "released=true" >> "$GITHUB_OUTPUT"
+            echo "tag=${after}" >> "$GITHUB_OUTPUT"
+          else
+            echo "No release made; nothing to publish."
+          fi
+
+  # Called rather than left to trigger itself on `release: published`.
+  # semantic-release creates that release with the default GITHUB_TOKEN, and
+  # GitHub does not start workflow runs from events raised by that token, so
+  # the trigger would never fire. publish.yml also carries a workflow_dispatch,
+  # which is the way back when a publish fails after the tag already exists.
+  publish:
+    name: Publish
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    uses: ./.github/workflows/publish.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}
+    secrets: inherit
