@@ -21,10 +21,11 @@ Override with `STEP_TEST_ADMIN_PORT`, `STEP_TEST_CONFIG_PORT` and
 
 Not run on every pull request: it pulls an image and needs a Docker daemon, so
 it should not gate a merge, and a failure reaching smallstep's CDN says nothing
-about the change under review. Both suites run when a PR carries the
-`integration` label, and from the Actions tab on demand
-(`.github/workflows/integration.yml`). Run it locally before a release, and
-whenever command construction or mode handling changes.
+about the change under review. Both suites run on pull requests touching
+`plugins/`, `roles/` or `tests/integration/`, and from the Actions tab on
+demand (`.github/workflows/integration.yml`). They also gate a release:
+`release.yml` calls this workflow, and a failure stops the version being
+tagged. Run it locally whenever command construction or mode handling changes.
 
 ## What each suite asserts
 

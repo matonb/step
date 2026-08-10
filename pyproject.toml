@@ -183,9 +183,17 @@ build_command = ""
 tag_format = "v{version}"
 version_variables = ["galaxy.yml:version"]
 
+# No template_dir, deliberately. A templates/ directory holding any changelog
+# template sends python-semantic-release down its custom-template branch, which
+# derives the output name by stripping .j2 and uses changelog_file only to
+# locate the *previous* changelog - so changelog_file stopped naming the
+# output. A release-notes-only override is exempt and would be safe. The
+# custom template that lived there also iterated a `versions` variable that
+# python-semantic-release does not bind, so every render since 1.0.0 produced
+# the literal "# Changelog" and nothing else. The built-in templates honour
+# changelog_file, produce actual content, and are maintained upstream.
 [tool.semantic_release.changelog.default_templates]
 changelog_file = "CHANGELOG.md"
-template_dir = "templates"
 
 [tool.semantic_release.branches.main]
 match = "main"

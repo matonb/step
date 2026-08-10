@@ -95,15 +95,11 @@ build_ignore:
   # is here rather than kept for the shipped tests deliberately: it configures
   # ruff and semantic-release only, and holds no pytest settings, so excluding
   # it takes nothing away from running tests/ where the collection is installed.
-  # `templates` is this repository's changelog template for semantic-release,
-  # not the roles' own templates - those live under roles/<name>/templates and
-  # are untouched by this entry.
   - .github
   - .gitignore
   - .pre-commit-config.yaml
   - .vscode
   - pyproject.toml
-  - templates
 
 # Example (disabled) for using a manifest instead of build_ignore
 # manifest:
