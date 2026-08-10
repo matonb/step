@@ -27,7 +27,7 @@
 
   tasks:
     - name: Add an ACME provisioner
-      matonb.step.provisioner:
+      matonb.smallstep.provisioner:
         ca_path: "{{ step_ca_path }}"
         name: acme
         run_as: "{{ step_ca_user }}"
@@ -35,7 +35,7 @@
       notify: Reload step-ca
 
     - name: Add a JWK provisioner for CI
-      matonb.step.provisioner:
+      matonb.smallstep.provisioner:
         ca_path: "{{ step_ca_path }}"
         name: cicd
         run_as: "{{ step_ca_user }}"
@@ -57,7 +57,7 @@
       when: cicd_provisioner.generated_password is defined
 
     - name: Retire an old provisioner
-      matonb.step.provisioner:
+      matonb.smallstep.provisioner:
         ca_path: "{{ step_ca_path }}"
         name: legacy
         run_as: "{{ step_ca_user }}"

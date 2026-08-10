@@ -7,12 +7,12 @@ import subprocess
 
 import pytest
 
-from ansible_collections.matonb.step.plugins.module_utils.connection import ManagementMode
-from ansible_collections.matonb.step.plugins.module_utils.provisioner import (
+from ansible_collections.matonb.smallstep.plugins.module_utils.connection import ManagementMode
+from ansible_collections.matonb.smallstep.plugins.module_utils.provisioner import (
     StepProvisionerClient,
     build_provisioner,
 )
-from ansible_collections.matonb.step.plugins.modules.provisioner import (
+from ansible_collections.matonb.smallstep.plugins.modules.provisioner import (
     apply_absent,
     apply_present,
     build_connection,
@@ -92,12 +92,12 @@ class TestArgumentSpec:
         spec = get_argument_spec()["root"]
         assert spec["aliases"] == ["ca_root"]
         assert spec["deprecated_aliases"][0]["name"] == "ca_root"
-        assert spec["deprecated_aliases"][0]["collection_name"] == "matonb.step"
+        assert spec["deprecated_aliases"][0]["collection_name"] == "matonb.smallstep"
 
     def test_fingerprint_is_marked_for_removal(self):
         spec = get_argument_spec()["fingerprint"]
         assert spec["removed_in_version"]
-        assert spec["removed_from_collection"] == "matonb.step"
+        assert spec["removed_from_collection"] == "matonb.smallstep"
 
     @pytest.mark.parametrize("option", ["admin_key", "admin_password_file"])
     def test_path_options_opt_out_of_the_no_log_heuristic(self, option):

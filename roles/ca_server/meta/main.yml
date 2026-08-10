@@ -27,7 +27,7 @@ galaxy_info:
 
 # step_cli owns the smallstep repository and the step CLI. A CA host needs
 # both: the repository to install step-ca from, and the CLI because
-# matonb.step.initialize shells out to `step ca init`.
+# matonb.smallstep.initialize shells out to `step ca init`.
 #
 # It is a dependency rather than duplicated here because two roles defining one
 # repository is how they came to fight over the same file - each rewriting the
@@ -35,4 +35,4 @@ galaxy_info:
 # dependencies before this role's own tasks and once per play, so including
 # ca_server alone still gives a complete CA host.
 dependencies:
-  - role: matonb.step.step_cli
+  - role: matonb.smallstep.step_cli

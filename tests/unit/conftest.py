@@ -3,7 +3,7 @@
 """Make the collection importable when pytest is run directly.
 
 Modules import their shared code as
-``ansible_collections.matonb.step.plugins.module_utils.*``, which only resolves
+``ansible_collections.matonb.smallstep.plugins.module_utils.*``, which only resolves
 when the collection sits in an ``ansible_collections/<namespace>/<name>``
 directory. ``ansible-test units`` arranges that itself; a developer running
 ``pytest tests/unit`` from a clone does not, because the clone is usually named
@@ -30,7 +30,7 @@ import sys
 
 import pytest
 
-COLLECTION = ("matonb", "step")
+COLLECTION = ("matonb", "smallstep")
 CACHE_DIR = ".pytest-collection-root"
 
 

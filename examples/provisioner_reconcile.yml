@@ -36,7 +36,7 @@
 
   tasks:
     - name: Apply the certificate duration policy
-      matonb.step.provisioner:
+      matonb.smallstep.provisioner:
         ca_path: "{{ step_ca_path }}"
         name: "{{ item.name }}"
         run_as: "{{ step_ca_user }}"
@@ -62,7 +62,7 @@
     # ca.json, the same file it writes. A second run before the reload is
     # correctly a no-op.
     - name: Confirm a repeat run changes nothing
-      matonb.step.provisioner:
+      matonb.smallstep.provisioner:
         ca_path: "{{ step_ca_path }}"
         name: "{{ step_provisioners[0].name }}"
         run_as: "{{ step_ca_user }}"

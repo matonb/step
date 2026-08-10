@@ -7,7 +7,7 @@
   gather_facts: true
 
   roles:
-    - matonb.step.ca_server
+    - matonb.smallstep.ca_server
 
   tasks:
     - name: Stand in for a ca.json change

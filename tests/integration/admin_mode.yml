@@ -29,7 +29,7 @@
       register: ca_json_before
 
     - name: Missing admin credentials must fail immediately, not hang
-      matonb.step.provisioner:
+      matonb.smallstep.provisioner:
         ca_config: "{{ ca_dir }}/ca.json"
         ca_url: "{{ ca_url }}"
         name: neverbuilt
@@ -47,7 +47,7 @@
           Expected incomplete admin credentials to be rejected before step ran
 
     - name: Add an ACME provisioner (check mode)
-      matonb.step.provisioner:
+      matonb.smallstep.provisioner:
         <<: *conn
         name: acme
         type: ACME
@@ -55,14 +55,14 @@
       register: acme_check
 
     - name: Add an ACME provisioner
-      matonb.step.provisioner:
+      matonb.smallstep.provisioner:
         <<: *conn
         name: acme
         type: ACME
       register: acme_add
 
     - name: Add it again
-      matonb.step.provisioner:
+      matonb.smallstep.provisioner:
         <<: *conn
         name: acme
         type: ACME
@@ -79,7 +79,7 @@
         fail_msg: "Admin mode add/idempotence/restart_required incorrect"
 
     - name: Add a JWK provisioner with claims
-      matonb.step.provisioner:
+      matonb.smallstep.provisioner:
         <<: *conn
         name: cicd
         type: JWK
@@ -89,7 +89,7 @@
       register: jwk_add
 
     - name: Add it again
-      matonb.step.provisioner:
+      matonb.smallstep.provisioner:
         <<: *conn
         name: cicd
         type: JWK
@@ -147,7 +147,7 @@
           The generated provisioner password did not yield a certificate
 
     - name: Change a claim
-      matonb.step.provisioner:
+      matonb.smallstep.provisioner:
         <<: *conn
         name: cicd
         type: JWK
@@ -179,14 +179,14 @@
           The Admin API change is not visible in the running CA
 
     - name: Remove the ACME provisioner
-      matonb.step.provisioner:
+      matonb.smallstep.provisioner:
         <<: *conn
         name: acme
         state: absent
       register: acme_remove
 
     - name: Remove it again
-      matonb.step.provisioner:
+      matonb.smallstep.provisioner:
         <<: *conn
         name: acme
         state: absent

@@ -9,7 +9,7 @@ import subprocess
 
 import pytest
 
-from ansible_collections.matonb.step.plugins.module_utils.process import (
+from ansible_collections.matonb.smallstep.plugins.module_utils.process import (
     CommandTimeoutError,
     _create_completed_process,
     _demotion_hook,

@@ -242,7 +242,7 @@ def save_json_file(module, json_path: str, data: dict[str, Any]) -> Optional[str
     target = os.path.realpath(json_path)
     directory = os.path.dirname(target) or "."
     try:
-        handle, temporary = tempfile.mkstemp(dir=directory, prefix=".matonb-step-", suffix=".json")
+        handle, temporary = tempfile.mkstemp(dir=directory, prefix=".matonb-smallstep-", suffix=".json")
     except OSError as error:
         return f"Failed to write JSON file '{target}': {error}"
 

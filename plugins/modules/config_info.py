@@ -4,7 +4,7 @@
 
 DOCUMENTATION = r"""
 ---
-module: bootstrap
+module: config_info
 short_description: Read a step-ca JSON configuration file
 version_added: "1.0.0"
 description:
@@ -24,7 +24,7 @@ author:
 
 EXAMPLES = r"""
 - name: Read the CA defaults
-  matonb.step.bootstrap:
+  matonb.smallstep.config_info:
     config_file: /etc/step-ca/config/defaults.json
   register: ca_defaults
 
@@ -47,7 +47,7 @@ config:
 
 from ansible.module_utils.basic import AnsibleModule
 
-from ansible_collections.matonb.step.plugins.module_utils.utils import (
+from ansible_collections.matonb.smallstep.plugins.module_utils.utils import (
     read_json_file,
 )
 

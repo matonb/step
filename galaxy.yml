@@ -10,7 +10,7 @@
 namespace: matonb
 
 # The name of the collection. Has the same character restrictions as 'namespace'
-name: step
+name: smallstep
 
 # The version of the collection. Must be compatible with semantic versioning
 version: 1.4.1
@@ -56,10 +56,10 @@ dependencies:
   community.general: '>=1.0.0'
 
 # Metadata URLs (optional but helpful)
-repository: https://github.com/matonb/step
-documentation: https://github.com/matonb/step/blob/main/README.md
-homepage: https://github.com/matonb/step
-issues: https://github.com/matonb/step/issues
+repository: https://github.com/matonb/smallstep
+documentation: https://github.com/matonb/smallstep/blob/main/README.md
+homepage: https://github.com/matonb/smallstep
+issues: https://github.com/matonb/smallstep/issues
 
 # List of file patterns to exclude from collection build artifact
 #

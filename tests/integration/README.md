@@ -2,7 +2,7 @@
 
 Two suites, for the two halves of the collection.
 
-`run.sh` drives `matonb.step.provisioner` against real `step-ca` instances, one
+`run.sh` drives `matonb.smallstep.provisioner` against real `step-ca` instances, one
 in each management mode. `role.sh` drives the `ca_server` role against
 containers running a real PID 1 systemd. Unit tests cannot prove that a flag is
 accepted by the real binary, that an Admin API change reaches the running CA, or
@@ -51,7 +51,7 @@ Every task runs **without reloading first**, which is the point. Add, re-add,
 reconcile a claim and remove all happen against a CA whose loaded configuration
 is stale, proving the module compares against `ca.json` — the file it writes —
 rather than against the CA. This is the regression test for
-[#31](https://github.com/matonb/step/issues/31); before the fix the second add
+[#31](https://github.com/matonb/smallstep/issues/31); before the fix the second add
 failed with `provisioner with name acme already exists`. A single `SIGHUP` at
 the end confirms the CA converges on exactly what `ca.json` holds.
 

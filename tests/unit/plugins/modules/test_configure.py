@@ -14,8 +14,8 @@ import stat
 
 import pytest
 
-from ansible_collections.matonb.step.plugins.modules import configure
-from ansible_collections.matonb.step.plugins.modules.configure import (
+from ansible_collections.matonb.smallstep.plugins.modules import configure
+from ansible_collections.matonb.smallstep.plugins.modules.configure import (
     CLAIM_KEYS,
     TOP_LEVEL_KEYS,
     apply_updates,
