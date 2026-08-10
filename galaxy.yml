@@ -62,7 +62,48 @@ homepage: https://github.com/matonb/step
 issues: https://github.com/matonb/step/issues
 
 # List of file patterns to exclude from collection build artifact
-build_ignore: []
+#
+# tests/ is deliberately NOT excluded. Shipping it lets someone who installs the
+# collection re-run the suite where they installed it, on their own Python and
+# ansible-core, rather than taking this repository's CI at its word - and the
+# comments in it record why the guards around the CA's private keys exist.
+build_ignore:
+  # Local state. None of this is ever in a CI checkout, which builds from a
+  # clean tag, so these entries earn their place when building by hand: without
+  # them the artifact carries .ansible's nested self-install of this collection,
+  # whatever the ruff and pytest caches happen to hold, and - in a tree that has
+  # one - a virtualenv's own copy of the Python interpreter. .gitignore already
+  # lists most of this, which ansible-galaxy does not read.
+  - .ansible
+  - .claude
+  - .coverage
+  - .coverage.*
+  - .pytest_cache
+  - .pytest-collection-root
+  - .ruff_cache
+  - .venv
+  - venv
+  - htmlcov
+  - '*.egg-info'
+  - build
+  - dist
+  - ansible.log
+  - CLAUDE.md
+  # Development and CI configuration. Tracked, so it would otherwise ship, and
+  # of no use to anyone consuming the collection - it only exposes internals
+  # that are already readable on GitHub by anyone who wants them. pyproject.toml
+  # is here rather than kept for the shipped tests deliberately: it configures
+  # ruff and semantic-release only, and holds no pytest settings, so excluding
+  # it takes nothing away from running tests/ where the collection is installed.
+  # `templates` is this repository's changelog template for semantic-release,
+  # not the roles' own templates - those live under roles/<name>/templates and
+  # are untouched by this entry.
+  - .github
+  - .gitignore
+  - .pre-commit-config.yaml
+  - .vscode
+  - pyproject.toml
+  - templates
 
 # Example (disabled) for using a manifest instead of build_ignore
 # manifest:

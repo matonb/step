@@ -1,0 +1,112 @@
+---
+name: Publish to Ansible Galaxy
+
+# Two ways in, and deliberately not `release: [published]`. semantic-release
+# creates the GitHub release using the default GITHUB_TOKEN, and GitHub does not
+# start workflow runs from events raised by that token, so that trigger would
+# never fire. release.yml calls this workflow instead.
+#
+# workflow_dispatch is the way back. A publish can fail long after the tag and
+# the GitHub release exist - a rejected token, a Galaxy outage, a version
+# already uploaded - and re-running the release workflow does not republish: it
+# checks out the commit that was pushed, whose galaxy.yml predates the bump,
+# finds the tag already present, and concludes nothing was released. Running
+# this against the tag is what fixes it.
+#
+# Note what that hatch costs: a dispatched run publishes whatever tag it is
+# given, with none of the gates release.yml puts in front of a release. That is
+# deliberate - the point of a recovery path is to work when the normal one has
+# not - but it means a tag published this way is only as tested as it was when
+# it was cut.
+"on":
+  workflow_call:
+    inputs:
+      tag:
+        description: Tag to build and publish, for example v1.3.3
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to build and publish, for example v1.3.3
+        required: true
+        type: string
+
+# Read-only, and stated rather than inherited. Called, this would otherwise take
+# release.yml's `contents: write` plus issues and pull-requests, none of which a
+# checkout-and-upload needs. Dispatched there is no caller to inherit from, so
+# it would fall back to the repository's default workflow permissions - a
+# setting outside this file that can change without anyone editing it.
+permissions:
+  contents: read
+
+# Only ansible-galaxy runs here. Pinned, and moving as a pair, for the reasons
+# set out in test.yml: ansible-core sets a controller Python floor per release,
+# and 2.20 needs >= 3.12.
+env:
+  ANSIBLE_CORE_VERSION: "2.20.5"
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  publish:
+    name: Build and publish
+    runs-on: ubuntu-24.04
+
+    steps:
+      # First, because the build below is cheap but the failure it prevents is
+      # confusing: ansible-galaxy reports a missing token as an authentication
+      # error against Galaxy, which reads like a problem at the far end.
+      #
+      # Duplicated verbatim in release.yml's preflight job, deliberately - see
+      # the note there for why this is not a composite action. Neither copy is
+      # redundant: preflight guards the release path, this one guards the
+      # workflow_dispatch path, which has no caller to have checked anything.
+      # If ANSIBLE_GALAXY_API_KEY is ever renamed, both copies have to move.
+      - name: Check the Galaxy token is present
+        env:
+          GALAXY_API_KEY: ${{ secrets.ANSIBLE_GALAXY_API_KEY }}
+        run: |
+          if [ -z "$GALAXY_API_KEY" ]; then
+            echo "::error::ANSIBLE_GALAXY_API_KEY is not set. Generate a" \
+                 "token at galaxy.ansible.com and add it as a repository" \
+                 "secret."
+            exit 1
+          fi
+
+      # The tag rather than the branch. galaxy.yml at that tag already holds the
+      # version semantic-release wrote, so the artifact takes its version from
+      # the one file that decides it, with nothing else needing to agree.
+      - name: Checkout the tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install ansible-core
+        run: |
+          python -m pip install --upgrade pip
+          pip install "ansible-core==${ANSIBLE_CORE_VERSION}"
+
+      # Built outside the checkout, so the output directory cannot become build
+      # input, and published by glob: that directory is created fresh and holds
+      # exactly one artifact, so nothing here has to restate the version.
+      #
+      # What lands in the artifact is decided by build_ignore in the galaxy.yml
+      # *at the checked-out tag*, not the one on main. That only matters when
+      # dispatching against a tag from before build_ignore was populated -
+      # v1.3.3 and earlier hold an empty list, so a build there ships .github/,
+      # .vscode/ and the development files. Fine for the recovery case this
+      # workflow exists for, which republishes a tag made after this change;
+      # worth knowing before backfilling Galaxy with older versions.
+      - name: Build and publish the collection
+        env:
+          GALAXY_API_KEY: ${{ secrets.ANSIBLE_GALAXY_API_KEY }}
+        run: |
+          ansible-galaxy collection build --output-path "$RUNNER_TEMP/dist"
+          ansible-galaxy collection publish \
+            "$RUNNER_TEMP"/dist/*.tar.gz \
+            --api-key "$GALAXY_API_KEY"

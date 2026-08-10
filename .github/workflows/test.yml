@@ -1,11 +1,24 @@
 ---
 name: Test (sanity & units)
 
+# No `push: main` trigger. release.yml calls this workflow on every push to
+# main, so keeping one would run both suites twice for each merge rather than
+# widening coverage. Calling it rather than leaving it to run alongside is the
+# point: as a separate workflow it raced the release, so a version could be
+# tagged and published while sanity and units were still running or already red.
+#
+# workflow_dispatch is kept so these suites can still be run against main on
+# their own. Without it the only way to reach them there would be re-running a
+# release, which drags semantic-release along with it.
 "on":
-  push:
-    branches:
-      - main
+  workflow_call:
+  workflow_dispatch:
   pull_request:
+
+# Read-only, and stated rather than inherited, so being called from release.yml
+# does not hand these jobs its `contents: write`. Both only read the checkout.
+permissions:
+  contents: read
 
 # Used by the sanity job. ansible-core is pinned for the same reason lint.yml
 # pins its hook versions: the sanity test set changes between minors, so an
