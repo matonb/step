@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.4.1 (2026-08-10)
+
+### Bug Fixes
+
+- **galaxy**: Add role READMEs so the collection imports
+  ([`b440894`](https://github.com/matonb/step/commit/b440894030d292d5dac8d9cac091aa3b361f03b0))
+
+
 ## v1.4.0 (2026-08-10)
 
 ### Documentation
