@@ -12,8 +12,8 @@
 set -euo pipefail
 
 IMAGE="${STEP_TEST_IMAGE:-smallstep/step-ca:latest}"
-ADMIN_CONTAINER="matonb-step-it-admin"
-CONFIG_CONTAINER="matonb-step-it-config"
+ADMIN_CONTAINER="matonb-smallstep-it-admin"
+CONFIG_CONTAINER="matonb-smallstep-it-config"
 ADMIN_PORT="${STEP_TEST_ADMIN_PORT:-9101}"
 CONFIG_PORT="${STEP_TEST_CONFIG_PORT:-9102}"
 CA_PASSWORD="integration-test-password"
@@ -63,11 +63,11 @@ require ansible-playbook
 # fail outright.
 docker rm -f "$ADMIN_CONTAINER" "$CONFIG_CONTAINER" >/dev/null 2>&1 || true
 
-# The module resolves `ansible_collections.matonb.step...`, so the checkout has
+# The module resolves `ansible_collections.matonb.smallstep...`, so the checkout has
 # to be reachable under that path. A symlink is enough for Ansible itself.
 COLLECTIONS="$WORK/collections"
 mkdir -p "$COLLECTIONS/ansible_collections/matonb"
-ln -s "$REPO_ROOT" "$COLLECTIONS/ansible_collections/matonb/step"
+ln -s "$REPO_ROOT" "$COLLECTIONS/ansible_collections/matonb/smallstep"
 export ANSIBLE_COLLECTIONS_PATH="$COLLECTIONS"
 
 wait_for_ca() {

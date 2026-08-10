@@ -1,11 +1,11 @@
-# matonb.step.step_cli
+# matonb.smallstep.step_cli
 
 Installs the [step CLI](https://smallstep.com/docs/step-cli/), and owns the
 smallstep package repository both roles in this collection install from.
 
 Use it directly on hosts that talk to a CA rather than run one.
-`matonb.step.ca_server` pulls it in for you, so a CA host does not need to name
-it.
+`matonb.smallstep.ca_server` pulls it in for you, so a CA host does not need to
+name it.
 
 ## Requirements
 
@@ -81,7 +81,7 @@ None.
 - name: Install the step CLI on hosts that talk to the CA
   hosts: clients
   roles:
-    - matonb.step.step_cli
+    - matonb.smallstep.step_cli
 ```
 
 Pinning a version, and installing from a mirror you manage yourself:
@@ -90,7 +90,7 @@ Pinning a version, and installing from a mirror you manage yourself:
 - name: Install a pinned step CLI from our own repository
   hosts: clients
   roles:
-    - role: matonb.step.step_cli
+    - role: matonb.smallstep.step_cli
       vars:
         step_cli_manage_repository: false
         step_cli_version: "0.30.6-1"
@@ -99,7 +99,7 @@ Pinning a version, and installing from a mirror you manage yourself:
 ## More
 
 Full documentation, including the collection's modules, is in the
-[collection README](https://github.com/matonb/step/blob/main/README.md).
+[collection README](https://github.com/matonb/smallstep/blob/main/README.md).
 
 ## License
 

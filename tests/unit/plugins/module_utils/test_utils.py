@@ -10,7 +10,7 @@ import stat
 
 import pytest
 
-from ansible_collections.matonb.step.plugins.module_utils.utils import (
+from ansible_collections.matonb.smallstep.plugins.module_utils.utils import (
     generate_secure_password,
     parse_duration,
     save_json_file,

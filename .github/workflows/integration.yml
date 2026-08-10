@@ -51,12 +51,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       # ansible-test is not used here, but role.sh and run.sh resolve the
-      # collection as matonb.step, so the checkout still has to sit at
+      # collection as matonb.smallstep, so the checkout still has to sit at
       # that path.
       - name: Checkout into a collection path
         uses: actions/checkout@v7
         with:
-          path: ansible_collections/matonb/step
+          path: ansible_collections/matonb/smallstep
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -85,7 +85,7 @@ jobs:
           step version
 
       - name: Run the module suite
-        working-directory: ansible_collections/matonb/step
+        working-directory: ansible_collections/matonb/smallstep
         run: bash tests/integration/run.sh
 
   roles:
@@ -95,7 +95,7 @@ jobs:
       - name: Checkout into a collection path
         uses: actions/checkout@v7
         with:
-          path: ansible_collections/matonb/step
+          path: ansible_collections/matonb/smallstep
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -121,5 +121,5 @@ jobs:
       # Twelve scenarios across two OS families, in containers with a real
       # PID 1 systemd. Around seven minutes.
       - name: Run the role suite
-        working-directory: ansible_collections/matonb/step
+        working-directory: ansible_collections/matonb/smallstep
         run: bash tests/integration/role.sh

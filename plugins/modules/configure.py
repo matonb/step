@@ -119,20 +119,20 @@ author:
 
 EXAMPLES = r"""
 - name: Configure certificate durations
-  matonb.step.configure:
+  matonb.smallstep.configure:
     default_tls_cert_duration: "720h"
     json_path: /etc/step-ca/config/ca.json
     max_tls_cert_duration: "8760h"
   notify: Reload step-ca
 
 - name: Configure the database datasource
-  matonb.step.configure:
+  matonb.smallstep.configure:
     db_datasource: /var/lib/step-ca/db
     json_path: /etc/step-ca/config/ca.json
   notify: Reload step-ca
 
 - name: Configure paths and durations together
-  matonb.step.configure:
+  matonb.smallstep.configure:
     crt: /etc/step-ca/certs/intermediate_ca.crt
     json_path: /etc/step-ca/config/ca.json
     key: /etc/step-ca/secrets/intermediate_ca_key
@@ -169,7 +169,7 @@ import os
 
 from ansible.module_utils.basic import AnsibleModule
 
-from ansible_collections.matonb.step.plugins.module_utils.utils import (
+from ansible_collections.matonb.smallstep.plugins.module_utils.utils import (
     parse_duration,
     read_json_file,
     save_json_file,

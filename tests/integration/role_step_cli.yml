@@ -6,7 +6,7 @@
   gather_facts: true
 
   roles:
-    - matonb.step.step_cli
+    - matonb.smallstep.step_cli
 
   tasks:
     - name: The step CLI is on PATH and runs

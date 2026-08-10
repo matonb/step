@@ -14,7 +14,7 @@ import subprocess
 
 import pytest
 
-from ansible_collections.matonb.step.plugins.module_utils.connection import (
+from ansible_collections.matonb.smallstep.plugins.module_utils.connection import (
     _COMMAND_FLAGS,
     _FLAG_NAMES,
     AdminCredentials,

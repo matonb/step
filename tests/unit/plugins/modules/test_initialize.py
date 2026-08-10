@@ -7,8 +7,8 @@ import os
 
 import pytest
 
-from ansible_collections.matonb.step.plugins.modules import initialize
-from ansible_collections.matonb.step.plugins.modules.initialize import (
+from ansible_collections.matonb.smallstep.plugins.modules import initialize
+from ansible_collections.matonb.smallstep.plugins.modules.initialize import (
     CA_FILE_NAMES,
     build_initialize_command,
     configured_paths,

@@ -25,7 +25,7 @@
     # for admin_subject using admin_provisioner. This is what
     # `step ca init --remote-management` sets up.
     - name: Add an ACME provisioner
-      matonb.step.provisioner:
+      matonb.smallstep.provisioner:
         admin_password_file: /etc/step-ca/secrets/provisioner_password
         admin_provisioner: admin
         admin_subject: step
@@ -50,7 +50,7 @@
     # and key you already hold. The key must not be encrypted - step loads it
     # without a password option and would prompt.
     - name: Add a JWK provisioner using an existing admin certificate
-      matonb.step.provisioner:
+      matonb.smallstep.provisioner:
         admin_cert: /etc/step-ca/admin/admin.crt
         admin_key: /etc/step-ca/admin/admin.key
         ca_path: "{{ step_ca_path }}"

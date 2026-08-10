@@ -1,11 +1,28 @@
 ---
 name: Lint (Ansible & Python)
 
+# No `push: main` trigger. release.yml calls this workflow on every push to
+# main, so keeping one would mostly lint twice per merge. Calling it rather
+# than leaving it to run alongside is the point: as a separate workflow it
+# raced the release, so a version could be tagged and published while lint was
+# still running or already red.
+#
+# One thing is genuinely given up. A push-triggered run had no concurrency
+# group, so it ran for every push to main under its own SHA; called, it
+# inherits release.yml's group, where a third merge cancels the waiting run.
+# The content is still linted - the surviving run's tree contains the cancelled
+# commits - but those commits get no lint result of their own.
+#
+# workflow_dispatch is kept so lint can still be run against main on its own.
 "on":
-  push:
-    branches:
-      - main
+  workflow_call:
+  workflow_dispatch:
   pull_request:
+
+# Read-only, and stated rather than inherited, so being called from release.yml
+# does not hand this job its `contents: write`. Linting only reads the checkout.
+permissions:
+  contents: read
 
 jobs:
   lint:

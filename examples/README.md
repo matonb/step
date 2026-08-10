@@ -1,6 +1,6 @@
 # Examples
 
-Example playbooks for `matonb.step`. They are written to be read, not run
+Example playbooks for `matonb.smallstep`. They are written to be read, not run
 unmodified: every one targets a `step_ca` inventory group and assumes the CA
 lives at `/etc/step-ca` owned by the `step` user. Change the `vars` block to
 match your deployment.
@@ -34,9 +34,9 @@ changes go through the Admin API and are live immediately, so
 `restart_required` is always `false`.
 
 Running these needs the collection installed, or a checkout reachable under an
-`ansible_collections/matonb/step` path:
+`ansible_collections/matonb/smallstep` path:
 
 ```console
-$ ansible-galaxy collection install matonb.step
+$ ansible-galaxy collection install matonb.smallstep
 $ ansible-playbook -i inventory.ini examples/provisioner_config_mode.yml
 ```

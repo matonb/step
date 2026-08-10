@@ -135,11 +135,11 @@ done <<<"$ROLE_VARS"
 DEB_SOURCES="/etc/apt/sources.list.d/$REPOSITORY_NAME.list"
 EL_REPO="/etc/yum.repos.d/$REPOSITORY_NAME.repo"
 
-# The role resolves as matonb.step.ca_server, so the checkout has to be
+# The role resolves as matonb.smallstep.ca_server, so the checkout has to be
 # reachable under that path. A symlink is enough for Ansible itself.
 COLLECTIONS="$WORK/collections"
 mkdir -p "$COLLECTIONS/ansible_collections/matonb"
-ln -s "$REPO_ROOT" "$COLLECTIONS/ansible_collections/matonb/step"
+ln -s "$REPO_ROOT" "$COLLECTIONS/ansible_collections/matonb/smallstep"
 
 # Prepended rather than assigned. This variable replaces the search path, it
 # does not add to it, so a bare assignment hides every collection the host
@@ -213,7 +213,7 @@ assert_changed() {
 # which is how the first version of this assertion managed to be vacuous. What
 # separates the two is the result line that follows it.
 assert_handler_ran() {
-    local banner="RUNNING HANDLER \[matonb.step.ca_server : $1\]" outcome
+    local banner="RUNNING HANDLER \[matonb.smallstep.ca_server : $1\]" outcome
     outcome="$(sed 's/\x1b\[[0-9;]*m//g' "$WORK/last.log" |
         grep -A3 -E "$banner" |
         grep -m1 -oE '^(changed|ok|skipping|fatal):' || true)"
@@ -268,8 +268,8 @@ assert_property() {
 
 start_host() {
     local family=$1 dockerfile=$2
-    local image="matonb-step-role-$family"
-    CONTAINER="matonb-step-it-role-$family"
+    local image="matonb-smallstep-role-$family"
+    CONTAINER="matonb-smallstep-it-role-$family"
     CONTAINERS+=("$CONTAINER")
 
     step "building the $family image"

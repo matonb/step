@@ -1,5 +1,8 @@
 # Step CA Ansible Collection
 
+[![Release](https://github.com/matonb/smallstep/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/matonb/smallstep/actions/workflows/release.yml)
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](LICENSE)
+
 Ansible collection for installing and managing a [Step CA](https://smallstep.com/docs/step-ca) certificate authority.
 
 ## Description
@@ -16,7 +19,7 @@ including against a CA that is not running.
 | module `initialize`            | Create the CA, idempotently                                            |
 | module `configure`             | Edit `ca.json` — paths, database, certificate duration claims          |
 | module `provisioner`           | Create, update and remove provisioners                                 |
-| module `bootstrap`             | Read a step-ca JSON configuration file, such as `defaults.json`        |
+| module `config_info`           | Read a step-ca JSON configuration file, such as `defaults.json`        |
 
 ## Requirements
 
@@ -35,7 +38,7 @@ including against a CA that is not running.
 
 ---
 
-## matonb.step.configure
+## matonb.smallstep.configure
 
 Modify Step CA configuration JSON file (ca.json). Supports top-level parameters and certificate duration claims.
 
@@ -88,7 +91,7 @@ both `config/ca.json` and the password file exist, which the unit requires.
 ```yaml
 # Set certificate duration limits
 - name: Configure certificate durations
-  matonb.step.configure:
+  matonb.smallstep.configure:
     default_tls_cert_duration: "720h" # 30 days
     json_path: /etc/step-ca/config/ca.json
     max_tls_cert_duration: "8760h" # 1 year
@@ -96,13 +99,13 @@ both `config/ca.json` and the password file exist, which the unit requires.
 
 # Update database path
 - name: Configure database
-  matonb.step.configure:
+  matonb.smallstep.configure:
     db_datasource: /var/lib/step-ca/db
     json_path: /etc/step-ca/config/ca.json
 
 # Configure multiple settings
 - name: Configure paths and durations
-  matonb.step.configure:
+  matonb.smallstep.configure:
     crt: /etc/step-ca/certs/intermediate_ca.crt
     json_path: /etc/step-ca/config/ca.json
     key: /etc/step-ca/secrets/intermediate_ca_key
@@ -112,7 +115,7 @@ both `config/ca.json` and the password file exist, which the unit requires.
 
 ---
 
-## matonb.step.provisioner
+## matonb.smallstep.provisioner
 
 Creates, updates and removes provisioners. Works against both management modes —
 see [Management modes](#management-modes) below.
@@ -196,7 +199,7 @@ required:
 
 ```yaml
 - name: Manage a provisioner on an admin-mode CA
-  matonb.step.provisioner:
+  matonb.smallstep.provisioner:
     admin_password_file: /etc/step-ca/secrets/provisioner_password
     admin_provisioner: admin        # a JWK provisioner the admin is bound to
     admin_subject: step             # the super admin created at init time
@@ -211,7 +214,7 @@ required:
 
 ```yaml
 - name: Manage a provisioner with an admin certificate
-  matonb.step.provisioner:
+  matonb.smallstep.provisioner:
     admin_cert: /etc/step-ca/admin.crt
     admin_key: /etc/step-ca/admin.key
     ca_path: /etc/step-ca
@@ -245,8 +248,8 @@ that matters to you.
 
 ### Upgrading from 1.1.x
 
-Two changes to `matonb.step.configure`, both closing
-[#37](https://github.com/matonb/step/issues/37):
+Two changes to `matonb.smallstep.configure`, both closing
+[#37](https://github.com/matonb/smallstep/issues/37):
 
 - **A missing `json_path` now fails** rather than creating a new file. Set
   `create: true` if a task genuinely builds a configuration from nothing.
@@ -254,7 +257,7 @@ Two changes to `matonb.step.configure`, both closing
   `ca_path` and `ca_config` beside it were `path`. The two combined badly: a
   `~/step-ca/config/ca.json` produced a literal `~` directory.
 
-Then, for `matonb.step.provisioner`:
+Then, for `matonb.smallstep.provisioner`:
 
 **`ca_path` or `ca_config` is now required, unless you set
 `management_mode: admin`.** Two things that used to work by reaching the CA over
@@ -265,7 +268,7 @@ So does a task whose `ca_path` does not actually contain `config/ca.json` — th
 containerised case, where `defaults.json` points `ca-config` somewhere else — or
 whose `ca.json` the module cannot read because it runs without `become`.
 
-This closes a real bug ([#31](https://github.com/matonb/step/issues/31)): in
+This closes a real bug ([#31](https://github.com/matonb/smallstep/issues/31)): in
 config mode the module read provisioners from the CA's *loaded* configuration
 while writing them to `ca.json`, so re-running a play before step-ca had been
 reloaded failed with `provisioner with name acme already exists`. Reading the
@@ -341,7 +344,7 @@ Complete, runnable playbooks live in [`examples/`](examples/).
 
 ```yaml
 - name: Create JWK provisioner
-  matonb.step.provisioner:
+  matonb.smallstep.provisioner:
     ca_path: /etc/step-ca
     name: my-jwk-provisioner
     run_as: step # Run as step user for proper CA access
@@ -368,7 +371,7 @@ adds several provisioners then reloads once, at the end.
 
 ```yaml
 - name: Remove provisioner
-  matonb.step.provisioner:
+  matonb.smallstep.provisioner:
     ca_path: /etc/step-ca
     name: old-provisioner
     run_as: step
@@ -395,7 +398,7 @@ without making it — `changed` is `false` when the provisioner already matches.
 
 ```yaml
 - name: Check whether the provisioner exists
-  matonb.step.provisioner:
+  matonb.smallstep.provisioner:
     ca_path: /etc/step-ca
     name: my-provisioner
     run_as: step
@@ -419,7 +422,7 @@ step refuses.
 
 ---
 
-## matonb.step.initialize
+## matonb.smallstep.initialize
 
 Running against a CA that is already there reports `ok` and changes nothing, so
 a play containing the task can be re-run.
@@ -443,7 +446,7 @@ half-built.
 `config/defaults.json` is deliberately not part of the test. step-ca itself is
 started with `ca.json` and never reads it, so a CA without it is initialized and
 working. It is not worthless though — it carries the `ca_url` and `root`
-defaults the `step` CLI and `matonb.step.provisioner` fall back on — so a CA
+defaults the `step` CLI and `matonb.smallstep.provisioner` fall back on — so a CA
 reported `ok` without it can still fail a later task that relies on those.
 Restore the file; do not reinitialize the CA for it.
 
@@ -474,16 +477,16 @@ irrecoverably.
 
 ## Roles
 
-### matonb.step.ca_server
+### matonb.smallstep.ca_server
 
 Installs step-ca, creates the `step` user, grants the binary
 `CAP_NET_BIND_SERVICE` so it can bind 443 without running as root, templates a
 sandboxed systemd unit, and manages the service.
 
-**It depends on `matonb.step.step_cli`**, which Ansible runs first. That role
+**It depends on `matonb.smallstep.step_cli`**, which Ansible runs first. That role
 owns the smallstep repository and the step CLI, so including `ca_server` alone
 still gives you a host that can initialize and manage its own CA —
-`matonb.step.initialize` shells out to `step ca init`. Configure the repository
+`matonb.smallstep.initialize` shells out to `step ca init`. Configure the repository
 through `step_cli`'s variables, below; there is deliberately only one set.
 
 | Variable                    | Default                     | Description                                                                       |
@@ -498,7 +501,7 @@ through `step_cli`'s variables, below; there is deliberately only one set.
 the key to the CA. Until it exists and is non-empty, the service will not start,
 and it must be readable by the `step` user, since that is who step-ca runs as.
 
-### matonb.step.step_cli
+### matonb.smallstep.step_cli
 
 Installs the step CLI, and owns the smallstep repository both roles install
 from. Use it directly on hosts that talk to a CA rather than run one;
@@ -609,7 +612,7 @@ reports drift on everything thereafter.
 - name: Build a CA
   hosts: ca
   roles:
-    - matonb.step.ca_server
+    - matonb.smallstep.ca_server
 
   tasks:
     - name: Install the CA password
@@ -624,7 +627,7 @@ reports drift on everything thereafter.
     - name: Initialize the CA
       become: true
       become_user: step
-      matonb.step.initialize:
+      matonb.smallstep.initialize:
         name: Example CA
         path: /etc/step-ca
         dns: [ca.example.com]

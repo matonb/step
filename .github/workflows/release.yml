@@ -78,6 +78,14 @@ jobs:
   # predict that, but only from a branch in a release group, so the prediction
   # cannot be checked anywhere except on main - and a wrong one silently skips
   # releases. The cost is these suites running on merges that release nothing.
+  # No `needs: preflight`, unlike the two below. preflight only establishes
+  # that the Galaxy token exists, and whether a release can be published has no
+  # bearing on whether the code lints. Gating it there would mean a missing or
+  # rotated secret left a push to main with nothing linted at all.
+  lint:
+    name: Lint
+    uses: ./.github/workflows/lint.yml
+
   test:
     name: Test
     needs: preflight
@@ -90,7 +98,7 @@ jobs:
 
   release:
     name: Semantic Release
-    needs: [test, integration]
+    needs: [lint, test, integration]
     runs-on: ubuntu-latest
 
     outputs:

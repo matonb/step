@@ -7,7 +7,7 @@ authors = [{ name = "Brett Maton", email = "brett@example.com" }]
 description = "Ansible collection for managing Smallstep Certificate Authority"
 dynamic = ["version"]
 license = { text = "GPL-3.0-or-later" }
-name = "matonb.step"
+name = "matonb.smallstep"
 requires-python = ">=3.9"
 
 [project.optional-dependencies]
@@ -176,7 +176,7 @@ max-statements = 60
 convention = "google" # Use Google-style docstrings
 
 [tool.ruff.lint.isort]
-known-first-party = ["ansible_collections.matonb.step"]
+known-first-party = ["ansible_collections.matonb.smallstep"]
 
 [tool.semantic_release]
 build_command = ""

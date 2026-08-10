@@ -215,7 +215,7 @@ author:
 
 EXAMPLES = r"""
 - name: Add an ACME provisioner to a ca.json-managed CA
-  matonb.step.provisioner:
+  matonb.smallstep.provisioner:
     ca_path: /etc/step-ca
     name: acme
     run_as: step
@@ -223,7 +223,7 @@ EXAMPLES = r"""
   notify: Reload step-ca
 
 - name: Add a JWK provisioner with certificate duration claims
-  matonb.step.provisioner:
+  matonb.smallstep.provisioner:
     ca_path: /etc/step-ca
     name: cicd
     run_as: step
@@ -234,7 +234,7 @@ EXAMPLES = r"""
   register: cicd_provisioner
 
 - name: Manage a provisioner on a remote-management (admin mode) CA
-  matonb.step.provisioner:
+  matonb.smallstep.provisioner:
     admin_password_file: /etc/step-ca/secrets/provisioner_password
     admin_provisioner: admin
     admin_subject: step
@@ -245,7 +245,7 @@ EXAMPLES = r"""
     type: ACME
 
 - name: Remove a provisioner
-  matonb.step.provisioner:
+  matonb.smallstep.provisioner:
     ca_path: /etc/step-ca
     name: acme
     run_as: step
@@ -310,22 +310,22 @@ from typing import Optional
 
 from ansible.module_utils.basic import AnsibleModule
 
-from ansible_collections.matonb.step.plugins.module_utils.connection import (
+from ansible_collections.matonb.smallstep.plugins.module_utils.connection import (
     AdminCredentials,
     ManagementMode,
     StepConnection,
     configured_mode,
     observed_mode,
 )
-from ansible_collections.matonb.step.plugins.module_utils.process import (
+from ansible_collections.matonb.smallstep.plugins.module_utils.process import (
     CommandTimeoutError,
 )
-from ansible_collections.matonb.step.plugins.module_utils.provisioner import (
+from ansible_collections.matonb.smallstep.plugins.module_utils.provisioner import (
     X509_CLAIMS,
     StepProvisionerClient,
     claim_drift,
 )
-from ansible_collections.matonb.step.plugins.module_utils.utils import PROMPT_PATTERN
+from ansible_collections.matonb.smallstep.plugins.module_utils.utils import PROMPT_PATTERN
 
 VALID_TYPES = [
     "JWK",
@@ -342,7 +342,7 @@ VALID_TYPES = [
 ]
 
 DEPRECATION_VERSION = "2.0.0"
-COLLECTION_NAME = "matonb.step"
+COLLECTION_NAME = "matonb.smallstep"
 
 
 def get_argument_spec() -> dict:

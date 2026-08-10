@@ -9,8 +9,8 @@ import subprocess
 
 import pytest
 
-from ansible_collections.matonb.step.plugins.module_utils.connection import ManagementMode, StepConnection
-from ansible_collections.matonb.step.plugins.module_utils.provisioner import (
+from ansible_collections.matonb.smallstep.plugins.module_utils.connection import ManagementMode, StepConnection
+from ansible_collections.matonb.smallstep.plugins.module_utils.provisioner import (
     COMMAND_TIMEOUT,
     X509_CLAIMS,
     ACMEProvisioner,

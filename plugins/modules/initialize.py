@@ -33,7 +33,7 @@ description:
     C(config/defaults.json) is not part of that test. step-ca is started with
     C(ca.json) and never reads it, so a CA without it is initialized and
     working. It is not worthless, though - it carries the defaults the step CLI
-    and M(matonb.step.provisioner) fall back on for C(ca_url) and C(root) - so
+    and M(matonb.smallstep.provisioner) fall back on for C(ca_url) and C(root) - so
     a CA reported C(ok) without it can still fail a later task that relies on
     those. Restore the file; do not reinitialize the CA for it.
   - >-
@@ -257,14 +257,14 @@ author:
 
 EXAMPLES = r"""
 - name: Initialize a standalone Step CA
-  matonb.step.initialize:
+  matonb.smallstep.initialize:
     name: "My CA"
     path: "/etc/step-ca"
     password_file: "/path/to/password"
     provisioner_password_file: "/path/to/provisioner_password"
 
 - name: Initialize a Step CA with remote management (admin mode)
-  matonb.step.initialize:
+  matonb.smallstep.initialize:
     admin_subject: step
     name: "My CA"
     path: "/etc/step-ca"
@@ -320,12 +320,12 @@ from typing import Any, Optional
 
 from ansible.module_utils.basic import AnsibleModule
 
-from ansible_collections.matonb.step.plugins.module_utils.connection import read_authority
-from ansible_collections.matonb.step.plugins.module_utils.process import (
+from ansible_collections.matonb.smallstep.plugins.module_utils.connection import read_authority
+from ansible_collections.matonb.smallstep.plugins.module_utils.process import (
     CommandTimeoutError,
     run_command,
 )
-from ansible_collections.matonb.step.plugins.module_utils.utils import read_json_file
+from ansible_collections.matonb.smallstep.plugins.module_utils.utils import read_json_file
 
 # The files `step ca init` creates. Two jobs only: telling an empty directory
 # from one holding something, and naming what `force` deletes. Whether a CA is

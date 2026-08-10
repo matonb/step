@@ -7,4 +7,4 @@
   gather_facts: true
 
   roles:
-    - matonb.step.ca_server
+    - matonb.smallstep.ca_server
