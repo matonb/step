@@ -7,7 +7,7 @@ Ansible collection for installing and managing a [Step CA](https://smallstep.com
 
 ## Description
 
-Four modules and two roles. The roles install step-ca and the step CLI and run
+Three modules and two roles. The roles install step-ca and the step CLI and run
 the CA under systemd; the modules initialize it, edit its configuration, and
 create, update and remove provisioners — in both of step-ca's management modes,
 including against a CA that is not running.
@@ -19,7 +19,6 @@ including against a CA that is not running.
 | module `initialize`            | Create the CA, idempotently                                            |
 | module `configure`             | Edit `ca.json` — paths, database, certificate duration claims          |
 | module `provisioner`           | Create, update and remove provisioners                                 |
-| module `config_info`           | Read a step-ca JSON configuration file, such as `defaults.json`        |
 
 ## Requirements
 
