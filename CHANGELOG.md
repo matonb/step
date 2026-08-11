@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.4.4 (2026-08-11)
+
+### Bug Fixes
+
+- **modules**: Remove the unused config_info module
+  ([`9d18b20`](https://github.com/matonb/smallstep/commit/9d18b208bb03a38fbdf3c0ea1fd3da6d29a933c2))
+
+
 ## v1.4.3 (2026-08-11)
 
 ### Bug Fixes
