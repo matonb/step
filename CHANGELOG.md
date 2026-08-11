@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.4.3 (2026-08-11)
+
+### Bug Fixes
+
+- **docs**: Correct the licence stated
+  ([`1add4e7`](https://github.com/matonb/smallstep/commit/1add4e7537614ec2f80eaba2dff5d0fbce6de7b6))
+
+
 ## v1.4.2 (2026-08-10)
 
 ### Bug Fixes
