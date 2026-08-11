@@ -664,7 +664,7 @@ else. Neither gates a merge, but both gate a release.
 
 ## License
 
-MIT
+GPL-3.0-or-later
 
 ## Author Information
 
